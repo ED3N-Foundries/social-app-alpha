@@ -1,0 +1,37 @@
+/* 
+ * src/styles/global.scss
+ *
+ * Global application styles and Vuetify overrides
+ */
+
+// Custom variables
+:root {
+  // Define your custom CSS variables here
+  --custom-primary: #1976d2;
+  --custom-secondary: #424242;
+}
+
+// Global styles
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+}
+
+* {
+  font-family: 'Lucida Console', monospace !important;
+}
+
+// Vuetify component overrides
+.v-btn {
+  // Example of overriding Vuetify component styles
+  letter-spacing: 0.5px;
+}
+
+// Custom utility classes
+.text-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// Add more of your custom styles below 

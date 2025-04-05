@@ -5,7 +5,7 @@ import { Routes, SERVER_HOST_URI } from "../../../server/consts";
 
 export const useAppStore = defineStore("app", () => {
 	// App State
-	const appName = ref("ED3Nsocial");
+	const appName = ref("ED3N//social");
 	const isAuthenticated = ref(false);
 	const email = ref("");
 

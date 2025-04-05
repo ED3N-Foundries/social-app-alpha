@@ -1,10 +1,24 @@
 <template>
   <v-app>
+    <v-app-bar app color="primary" class="px-4" dark>
+      <div class="d-flex align-center">
+        <img src="@/assets/logo_trans.png" alt="ED3N Logo" height="120" class="mr-2" />
+        <span class="text-h5">&nbsp;// social</span>
+      </div>
+
+      <v-spacer></v-spacer>
+
+      <div class="d-flex align-center">
+        <span class="mr-2">Powered by</span>
+        <img src="@/assets/polygon_logo.png" alt="Polygon" height="60" class="mx-1 mt-1" />
+        <img src="@/assets/metal_logo.svg" alt="Metal" height="45" class="ml-1 mb-1" />
+      </div>
+    </v-app-bar>
+
     <v-main>
       <v-container>
         <v-row justify="center" align="center" style="min-height: 80vh;">
           <v-col cols="12" sm="8" md="6">
-            <h1 class="text-center mb-6">Welcome to {{ appStore.appName }}</h1>
             <AuthCard v-if="!appStore.isLoggedIn" />
             <EventList v-else-if="currentView === 'events'" />
           </v-col>
