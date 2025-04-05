@@ -2,7 +2,19 @@
   <div class="event-list">
     <div class="fixed-header">
       <v-container>
-        <h2 class="text-h4 mb-4">Upcoming Events</h2>
+        <div class="d-flex align-center">
+          <h2 class="text-h4 mb-4">Upcoming Events</h2>
+          <v-spacer></v-spacer>
+          <v-btn
+            icon
+            variant="text"
+            @click="refreshEvents"
+            :loading="refreshing"
+            :disabled="loading"
+          >
+            <v-icon>mdi-refresh</v-icon>
+          </v-btn>
+        </div>
       </v-container>
     </div>
 
@@ -25,260 +37,267 @@
         </div>
 
         <!-- Events list -->
-        <v-row v-if="events.length">
-          <v-col
-            v-for="event in events"
-            :key="event.id"
-            cols="12"
-          >
-            <v-fade-transition leave-absolute>
-              <!-- Event View Card -->
-              <v-card v-if="editingEventId !== event.id" class="mx-auto">
-                <v-img
-                  v-if="event.image_url"
-                  :src="event.image_url"
-                  height="200"
-                  cover
-                  class="align-end"
-                >
-                  <template v-slot:placeholder>
-                    <v-row class="fill-height ma-0" align="center" justify="center">
-                      <v-progress-circular indeterminate color="grey-lighten-5"></v-progress-circular>
-                    </v-row>
-                  </template>
-                </v-img>
-                <v-card-title>{{ event.title }}</v-card-title>
-                <v-card-subtitle>
-                  <v-icon small class="mr-1">mdi-calendar</v-icon>
-                  {{ formatDate(event.date) }}
-                  <v-icon small class="ml-3 mr-1">mdi-map-marker</v-icon>
-                  {{ event.location || 'Location TBD' }}
-                </v-card-subtitle>
-                <v-card-text>
-                  {{ event.description || 'No description provided' }}
-                </v-card-text>
+        <v-fade-transition leave-absolute>
+          <div v-if="!refreshing">
+            <v-row v-if="events.length">
+              <v-col
+                v-for="event in events"
+                :key="event.id"
+                cols="12"
+              >
+                <v-fade-transition leave-absolute>
+                  <!-- Event View Card -->
+                  <v-card v-if="editingEventId !== event.id" class="mx-auto">
+                    <v-img
+                      v-if="event.image_url"
+                      :src="event.image_url"
+                      height="200"
+                      cover
+                      class="align-end"
+                    >
+                      <template v-slot:placeholder>
+                        <v-row class="fill-height ma-0" align="center" justify="center">
+                          <v-progress-circular indeterminate color="grey-lighten-5"></v-progress-circular>
+                        </v-row>
+                      </template>
+                    </v-img>
+                    <v-card-title>{{ event.title }}</v-card-title>
+                    <v-card-subtitle>
+                      <v-icon small class="mr-1">mdi-calendar</v-icon>
+                      {{ formatDate(event.date) }}
+                      <v-icon small class="ml-3 mr-1">mdi-map-marker</v-icon>
+                      {{ event.location || 'Location TBD' }}
+                    </v-card-subtitle>
+                    <v-card-text>
+                      {{ event.description || 'No description provided' }}
+                    </v-card-text>
 
-                <!-- Attendee limit progress -->
-                <v-card-text v-if="event.stake_amount > 0">
-                  <div class="d-flex align-center mb-1">
-                    <span class="text-subtitle-2 mr-2">Attendee Limit: {{ event.stake_amount }}</span>
-                    <v-spacer></v-spacer>
-                    <span class="text-subtitle-2">
-                      {{ getApprovedCount(event) }} approved / {{ getPendingCount(event) }} pending
-                    </span>
-                  </div>
-
-                  <v-progress-linear
-                    height="8"
-                    rounded
-                  >
-                    <template v-slot:default>
-                      <div class="custom-progress-container">
-                        <div
-                          class="custom-progress-value-staked"
-                          :style="{ width: `${(getApprovedCount(event) / (event.stake_amount || 1)) * 100}%` }"
-                        ></div>
-                        <div
-                          class="custom-progress-value-pending"
-                          :style="{ width: `${(getPendingCount(event) / (event.stake_amount || 1)) * 100}%` }"
-                        ></div>
+                    <!-- Attendee limit progress -->
+                    <v-card-text v-if="event.stake_amount > 0">
+                      <div class="d-flex align-center mb-1">
+                        <span class="text-subtitle-2 mr-2">Attendee Limit: {{ event.stake_amount }}</span>
+                        <v-spacer></v-spacer>
+                        <span class="text-subtitle-2">
+                          {{ getApprovedCount(event) }} approved / {{ getPendingCount(event) }} pending
+                        </span>
                       </div>
-                    </template>
-                  </v-progress-linear>
 
-                  <div class="d-flex align-center mt-1">
-                    <span class="text-caption"><v-icon small color="success">mdi-check</v-icon> Approved</span>
-                    <v-spacer></v-spacer>
-                    <span class="text-caption"><v-icon small color="warning">mdi-clock</v-icon> Pending</span>
-                  </div>
-                </v-card-text>
+                      <v-progress-linear
+                        height="8"
+                        rounded
+                      >
+                        <template v-slot:default>
+                          <div class="custom-progress-container">
+                            <div
+                              class="custom-progress-value-staked"
+                              :style="{ width: `${(getApprovedCount(event) / (event.stake_amount || 1)) * 100}%` }"
+                            ></div>
+                            <div
+                              class="custom-progress-value-pending"
+                              :style="{ width: `${(getPendingCount(event) / (event.stake_amount || 1)) * 100}%` }"
+                            ></div>
+                          </div>
+                        </template>
+                      </v-progress-linear>
 
-                <!-- Staking information -->
-                <v-card-text v-if="event.stake_amount > 0">
-                  <v-alert
-                    color="info"
-                    icon="mdi-information"
-                    variant="tonal"
-                    class="my-1"
-                    density="compact"
-                  >
-                    Joining this event requires staking {{ event.stake_amount }} $ED3N tokens
-                  </v-alert>
-                </v-card-text>
+                      <div class="d-flex align-center mt-1">
+                        <span class="text-caption"><v-icon small color="success">mdi-check</v-icon> Approved</span>
+                        <v-spacer></v-spacer>
+                        <span class="text-caption"><v-icon small color="warning">mdi-clock</v-icon> Pending</span>
+                      </div>
+                    </v-card-text>
 
-                <!-- Attendees section -->
-                <v-card-text>
-                  <v-expansion-panels>
-                    <v-expansion-panel>
-                      <v-expansion-panel-title>
-                        <div class="d-flex align-center">
-                          <v-icon left>mdi-account-group</v-icon>
-                          <span>Attendees ({{ event.attendees ? event.attendees.length : 0 }})</span>
-                        </div>
-                      </v-expansion-panel-title>
-                      <v-expansion-panel-text>
-                        <div v-if="!event.attendees || event.attendees.length === 0" class="text-center pa-4">
-                          <p class="text-body-1">No attendees yet</p>
-                        </div>
-                        <v-list v-else>
-                          <v-list-item
-                            v-for="attendee in event.attendees"
-                            :key="attendee.id"
-                          >
-                            <template v-slot:prepend>
-                              <v-avatar color="primary" size="36">
-                                {{ getInitial(attendee.attendee_email || '') }}
-                              </v-avatar>
-                            </template>
+                    <!-- Staking information -->
+                    <v-card-text v-if="event.stake_amount > 0">
+                      <v-alert
+                        color="info"
+                        icon="mdi-information"
+                        variant="tonal"
+                        class="my-1"
+                        density="compact"
+                      >
+                        Joining this event requires staking {{ event.stake_amount }} $ED3N tokens
+                      </v-alert>
+                    </v-card-text>
 
-                            <v-list-item-title>{{ attendee.attendee_email }}</v-list-item-title>
-                            <v-list-item-subtitle>
-                              <v-chip
-                                size="small"
-                                :color="getStatusColor(attendee.status)"
+                    <!-- Attendees section -->
+                    <v-card-text>
+                      <v-expansion-panels>
+                        <v-expansion-panel>
+                          <v-expansion-panel-title>
+                            <div class="d-flex align-center">
+                              <v-icon class="mr-3">mdi-account-group</v-icon>
+                              <span>Attendees ({{ event.attendees ? event.attendees.length : 0 }})</span>
+                            </div>
+                          </v-expansion-panel-title>
+                          <v-expansion-panel-text>
+                            <div v-if="!event.attendees || event.attendees.length === 0" class="text-center pa-4">
+                              <p class="text-body-1">No attendees yet</p>
+                            </div>
+                            <v-list v-else>
+                              <v-list-item
+                                v-for="attendee in event.attendees"
+                                :key="attendee.id"
                               >
-                                {{ attendee.status }}
-                              </v-chip>
-                            </v-list-item-subtitle>
+                                <template v-slot:prepend>
+                                  <v-avatar color="primary" size="36">
+                                    {{ getInitial(attendee.attendee_email || '') }}
+                                  </v-avatar>
+                                </template>
 
-                            <!-- Approve/Reject buttons with opposing button disabled -->
-                            <template v-slot:append v-if="canEditEvent(event) && attendee.status === 'pending'">
-                              <v-btn
-                                icon="mdi-check"
-                                variant="text"
-                                color="success"
-                                size="small"
-                                :loading="loadingApprove[`${event.id}-${attendee.attendee_email}`]"
-                                :disabled="loadingReject[`${event.id}-${attendee.attendee_email}`]"
-                                @click="approveAttendeeHandler(event.id as number, attendee.attendee_email)"
-                              ></v-btn>
-                              <v-btn
-                                icon="mdi-close"
-                                variant="text"
-                                color="error"
-                                size="small"
-                                :loading="loadingReject[`${event.id}-${attendee.attendee_email}`]"
-                                :disabled="loadingApprove[`${event.id}-${attendee.attendee_email}`]"
-                                @click="rejectAttendeeHandler(event.id as number, attendee.attendee_email)"
-                              ></v-btn>
-                            </template>
-                          </v-list-item>
-                        </v-list>
-                      </v-expansion-panel-text>
-                    </v-expansion-panel>
-                  </v-expansion-panels>
-                </v-card-text>
+                                <v-list-item-title>{{ attendee.attendee_email }}</v-list-item-title>
+                                <v-list-item-subtitle>
+                                  <v-chip
+                                    size="small"
+                                    :color="getStatusColor(attendee.status)"
+                                  >
+                                    {{ attendee.status }}
+                                  </v-chip>
+                                </v-list-item-subtitle>
 
-                <v-card-actions>
-                  <v-btn
-                    v-if="!canEditEvent(event) && !hasJoinedEvent(event)"
-                    variant="text"
-                    color="primary"
-                    @click="showJoinEventDialog = true; eventToJoin = event"
-                  >
-                    <v-icon class="mr-1">mdi-account-plus</v-icon>
-                    Join
-                  </v-btn>
-                  <v-spacer></v-spacer>
-                  <v-btn
-                    v-if="canEditEvent(event)"
-                    variant="text"
-                    color="error"
-                    @click="confirmDeleteEvent(event)"
-                  >
-                    <v-icon class="mr-1">mdi-delete</v-icon>
-                    Delete
-                  </v-btn>
-                  <v-btn
-                    v-if="canEditEvent(event)"
-                    variant="text"
-                    color="secondary"
-                    @click="startEditingEvent(event)"
-                  >
-                    <v-icon class="mr-1">mdi-pencil</v-icon>
-                    Edit
-                  </v-btn>
-                </v-card-actions>
-              </v-card>
+                                <!-- Approve/Reject buttons with opposing button disabled -->
+                                <template v-slot:append v-if="canEditEvent(event) && attendee.status === 'pending'">
+                                  <v-btn
+                                    icon="mdi-check"
+                                    variant="text"
+                                    color="success"
+                                    size="small"
+                                    :loading="loadingApprove[`${event.id}-${attendee.attendee_email}`]"
+                                    :disabled="loadingReject[`${event.id}-${attendee.attendee_email}`]"
+                                    @click="approveAttendeeHandler(event.id as number, attendee.attendee_email)"
+                                  ></v-btn>
+                                  <v-btn
+                                    icon="mdi-close"
+                                    variant="text"
+                                    color="error"
+                                    size="small"
+                                    :loading="loadingReject[`${event.id}-${attendee.attendee_email}`]"
+                                    :disabled="loadingApprove[`${event.id}-${attendee.attendee_email}`]"
+                                    @click="rejectAttendeeHandler(event.id as number, attendee.attendee_email)"
+                                  ></v-btn>
+                                </template>
+                              </v-list-item>
+                            </v-list>
+                          </v-expansion-panel-text>
+                        </v-expansion-panel>
+                      </v-expansion-panels>
+                    </v-card-text>
 
-              <!-- Event Edit Card -->
-              <v-card v-else class="mx-auto">
-                <v-card-title>Edit Event</v-card-title>
-                <v-card-text>
-                  <v-form ref="editForm" v-model="editFormValid" @submit.prevent="updateEventHandler">
-                    <v-text-field
-                      v-model="editingEvent.title"
-                      label="Event Title"
-                      required
-                      :rules="[(v: string) => !!v || 'Title is required']"
-                    ></v-text-field>
+                    <v-card-actions>
+                      <v-btn
+                        v-if="!canEditEvent(event) && !hasJoinedEvent(event)"
+                        variant="text"
+                        color="primary"
+                        @click="showJoinEventDialog = true; eventToJoin = event"
+                      >
+                        <v-icon class="mr-1">mdi-account-plus</v-icon>
+                        Join
+                      </v-btn>
+                      <v-spacer></v-spacer>
+                      <v-btn
+                        v-if="canEditEvent(event)"
+                        variant="text"
+                        color="error"
+                        @click="confirmDeleteEvent(event)"
+                      >
+                        <v-icon class="mr-1">mdi-delete</v-icon>
+                        Delete
+                      </v-btn>
+                      <v-btn
+                        v-if="canEditEvent(event)"
+                        variant="text"
+                        color="secondary"
+                        @click="startEditingEvent(event)"
+                      >
+                        <v-icon class="mr-1">mdi-pencil</v-icon>
+                        Edit
+                      </v-btn>
+                    </v-card-actions>
+                  </v-card>
 
-                    <v-textarea
-                      v-model="editingEvent.description"
-                      label="Description"
-                      rows="3"
-                    ></v-textarea>
+                  <!-- Event Edit Card -->
+                  <v-card v-else class="mx-auto">
+                    <v-card-title>Edit Event</v-card-title>
+                    <v-card-text>
+                      <v-form ref="editForm" v-model="editFormValid" @submit.prevent="updateEventHandler">
+                        <v-text-field
+                          v-model="editingEvent.title"
+                          label="Event Title"
+                          required
+                          :rules="[(v: string) => !!v || 'Title is required']"
+                        ></v-text-field>
 
-                    <v-text-field
-                      v-model="editingEvent.date"
-                      label="Date"
-                      type="datetime-local"
-                      required
-                      :rules="[(v: string) => !!v || 'Date is required']"
-                    ></v-text-field>
+                        <v-textarea
+                          v-model="editingEvent.description"
+                          label="Description"
+                          rows="3"
+                        ></v-textarea>
 
-                    <v-text-field
-                      v-model="editingEvent.location"
-                      label="Location"
-                    ></v-text-field>
+                        <v-text-field
+                          v-model="editingEvent.date"
+                          label="Date"
+                          type="datetime-local"
+                          required
+                          :rules="[(v: string) => !!v || 'Date is required']"
+                        ></v-text-field>
 
-                    <v-text-field
-                      v-model="editingEvent.image_url"
-                      label="Image URL"
-                      hint="Enter a URL for the event image"
-                    ></v-text-field>
+                        <v-text-field
+                          v-model="editingEvent.location"
+                          label="Location"
+                        ></v-text-field>
 
-                    <v-text-field
-                      v-model.number="editingEvent.stake_amount"
-                      label="Stake Amount"
-                      type="number"
-                      min="0"
-                      :rules="[(v: number) => v >= 0 || 'Limit must be a positive number']"
-                      hint="Amount of $ED3N tokens required to attend this event"
-                    ></v-text-field>
+                        <v-text-field
+                          v-model="editingEvent.image_url"
+                          label="Image URL"
+                          hint="Enter a URL for the event image"
+                        ></v-text-field>
 
-                    <v-text-field
-                      v-model.number="editingEvent.attendee_limit"
-                      label="Attendee Limit"
-                      type="number"
-                      min="0"
-                      :rules="[(v: number) => v >= 0 || 'Limit must be a positive number']"
-                      hint="Maximum number of attendees allowed for this event"
-                    ></v-text-field>
-                  </v-form>
-                </v-card-text>
-                <v-card-actions>
-                  <v-btn
-                    color="error"
-                    variant="text"
-                    @click="cancelEditing"
-                  >
-                    Cancel
-                  </v-btn>
-                  <v-spacer></v-spacer>
-                  <v-btn
-                    color="primary"
-                    variant="text"
-                    @click="updateEventHandler"
-                    :disabled="!editFormValid"
-                  >
-                    Save Changes
-                  </v-btn>
-                </v-card-actions>
-              </v-card>
-            </v-fade-transition>
-          </v-col>
-        </v-row>
+                        <v-text-field
+                          v-model.number="editingEvent.stake_amount"
+                          label="Stake Amount"
+                          type="number"
+                          min="0"
+                          :rules="[(v: number) => v >= 0 || 'Limit must be a positive number']"
+                          hint="Amount of $ED3N tokens required to attend this event"
+                        ></v-text-field>
+
+                        <v-text-field
+                          v-model.number="editingEvent.attendee_limit"
+                          label="Attendee Limit"
+                          type="number"
+                          min="0"
+                          :rules="[(v: number) => v >= 0 || 'Limit must be a positive number']"
+                          hint="Maximum number of attendees allowed for this event"
+                        ></v-text-field>
+                      </v-form>
+                    </v-card-text>
+                    <v-card-actions>
+                      <v-btn
+                        color="error"
+                        variant="text"
+                        @click="cancelEditing"
+                      >
+                        Cancel
+                      </v-btn>
+                      <v-spacer></v-spacer>
+                      <v-btn
+                        color="primary"
+                        variant="text"
+                        @click="updateEventHandler"
+                        :disabled="!editFormValid"
+                      >
+                        Save Changes
+                      </v-btn>
+                    </v-card-actions>
+                  </v-card>
+                </v-fade-transition>
+              </v-col>
+            </v-row>
+          </div>
+          <div v-else class="d-flex justify-center my-4">
+            <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
+          </div>
+        </v-fade-transition>
       </v-container>
     </div>
 
@@ -493,6 +512,7 @@ interface ExtendedEvent extends Event {
 const appStore = useAppStore();
 const events = ref<ExtendedEvent[]>([]);
 const loading = ref(true);
+const refreshing = ref(false);
 const showCreateEventDialog = ref(false);
 const valid = ref(false);
 const editFormValid = ref(false);
@@ -854,6 +874,21 @@ const getApprovedCount = (event: ExtendedEvent | null) => {
 const getPendingCount = (event: ExtendedEvent | null) => {
 	if (!event || !event.attendees) return 0;
 	return event.attendees.filter((a) => a.status === "pending").length;
+};
+
+// Refresh events
+const refreshEvents = async () => {
+	if (refreshing.value) return;
+	refreshing.value = true;
+	try {
+		await loadEvents();
+		showNotification("Events refreshed successfully");
+	} catch (error) {
+		console.error("Error refreshing events:", error);
+		showNotification("Failed to refresh events", "error");
+	} finally {
+		refreshing.value = false;
+	}
 };
 </script>
 
