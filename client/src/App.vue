@@ -46,6 +46,14 @@
         Events
       </v-btn>
       <v-btn
+        value="people"
+        disabled
+        @click="navigateTo('people')"
+      >
+        <v-icon>mdi-account-group</v-icon>
+        People
+      </v-btn>
+      <v-btn
         value="profile"
         @click="showProfileDrawer = true"
       >

@@ -34,6 +34,19 @@
             <v-fade-transition leave-absolute>
               <!-- Event View Card -->
               <v-card v-if="editingEventId !== event.id" class="mx-auto">
+                <v-img
+                  v-if="event.image_url"
+                  :src="event.image_url"
+                  height="200"
+                  cover
+                  class="align-end"
+                >
+                  <template v-slot:placeholder>
+                    <v-row class="fill-height ma-0" align="center" justify="center">
+                      <v-progress-circular indeterminate color="grey-lighten-5"></v-progress-circular>
+                    </v-row>
+                  </template>
+                </v-img>
                 <v-card-title>{{ event.title }}</v-card-title>
                 <v-card-subtitle>
                   <v-icon small class="mr-1">mdi-calendar</v-icon>
@@ -96,6 +109,12 @@
                     <v-text-field
                       v-model="editingEvent.location"
                       label="Location"
+                    ></v-text-field>
+
+                    <v-text-field
+                      v-model="editingEvent.image_url"
+                      label="Image URL"
+                      hint="Enter a URL for the event image"
                     ></v-text-field>
                   </v-form>
                 </v-card-text>
@@ -165,6 +184,12 @@
             <v-text-field
               v-model="newEvent.location"
               label="Location"
+            ></v-text-field>
+
+            <v-text-field
+              v-model="newEvent.image_url"
+              label="Image URL"
+              hint="Enter a URL for the event image"
             ></v-text-field>
           </v-form>
         </v-card-text>
@@ -242,6 +267,7 @@ const editingEvent = reactive({
 	description: "",
 	date: "",
 	location: "",
+	image_url: "",
 	creator_email: "",
 });
 
@@ -250,6 +276,7 @@ const newEvent = reactive({
 	description: "",
 	date: "",
 	location: "",
+	image_url: "",
 });
 
 const showDeleteDialog = ref(false);
@@ -298,6 +325,7 @@ const createEventHandler = async () => {
 		newEvent.description = "";
 		newEvent.date = "";
 		newEvent.location = "";
+		newEvent.image_url = "";
 		showCreateEventDialog.value = false;
 	} catch (error) {
 		console.error("Error creating event:", error);
@@ -319,6 +347,7 @@ const startEditingEvent = (event: Event) => {
 	editingEvent.description = event.description;
 	editingEvent.date = event.date;
 	editingEvent.location = event.location;
+	editingEvent.image_url = event.image_url || "";
 	editingEvent.creator_email = event.creator_email;
 };
 
@@ -340,6 +369,7 @@ const updateEventHandler = async () => {
 				description: editingEvent.description,
 				date: editingEvent.date,
 				location: editingEvent.location,
+				image_url: editingEvent.image_url,
 			},
 			appStore.userEmail,
 		);

@@ -29,6 +29,7 @@ export interface Event {
 	description: string;
 	date: string;
 	location: string;
+	image_url?: string;
 	creator_email: string;
 	created_at: string;
 }
@@ -68,6 +69,7 @@ db.exec(`
     description TEXT,
     date TEXT NOT NULL,
     location TEXT,
+    image_url TEXT,
     creator_email TEXT NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (creator_email) REFERENCES users(email)
@@ -356,8 +358,14 @@ serve({
 		"/events/create": {
 			POST: async (req) => {
 				try {
-					const { title, description, date, location, creator_email } =
-						await req.json();
+					const {
+						title,
+						description,
+						date,
+						location,
+						image_url,
+						creator_email,
+					} = await req.json();
 
 					if (!title || !date || !creator_email) {
 						return addCorsHeaders(
@@ -390,13 +398,14 @@ serve({
 					// Insert the new event
 					const result = db
 						.query(
-							"INSERT INTO events (title, description, date, location, creator_email, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+							"INSERT INTO events (title, description, date, location, image_url, creator_email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 						)
 						.run(
 							title,
 							description || "",
 							date,
 							location || "",
+							image_url || "",
 							creator_email,
 							new Date().toISOString(),
 						);
@@ -463,8 +472,14 @@ serve({
 			PUT: async (req) => {
 				try {
 					const { id } = req.params;
-					const { title, description, date, location, creator_email } =
-						await req.json();
+					const {
+						title,
+						description,
+						date,
+						location,
+						image_url,
+						creator_email,
+					} = await req.json();
 
 					if (!id) {
 						return addCorsHeaders(
@@ -506,12 +521,13 @@ serve({
 
 					// Update the event
 					db.query(
-						"UPDATE events SET title = ?, description = ?, date = ?, location = ? WHERE id = ?",
+						"UPDATE events SET title = ?, description = ?, date = ?, location = ?, image_url = ? WHERE id = ?",
 					).run(
 						title || existingEvent.title,
 						description !== undefined ? description : existingEvent.description,
 						date || existingEvent.date,
 						location !== undefined ? location : existingEvent.location,
+						image_url !== undefined ? image_url : existingEvent.image_url,
 						id,
 					);
 
