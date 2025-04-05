@@ -11,6 +11,7 @@
   },
   "module": "server.ts",
   "dependencies": {
+    "@openzeppelin/contracts": "^5.2.0",
     "siwe": "^3.0.0",
     "viem": "^2.25.0"
   },

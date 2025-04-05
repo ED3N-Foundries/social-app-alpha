@@ -7,6 +7,11 @@ export const CLIENT_DEV_PORT = 5174;
 export const ED3N_TOKEN_SYMBOL = "ED3N";
 export const ED3N_TOKEN_ADDRESS = "0x36bb8e8d361b0e487869270fbfea6924498a4bc3";
 
+// Polygon configuration
+export const POLYGON_RPC_URL = "https://polygon-rpc.com";
+export const POLYGON_CONTRACT_ADDRESS =
+	"0xC28f7C1eB56312271B74B1332495F4231936F61b";
+
 // Route constructors for client use
 export const Routes = {
 	health: () => "/health",

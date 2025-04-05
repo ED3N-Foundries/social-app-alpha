@@ -1,10 +1,74 @@
 // Import required Bun modules
 import { serve } from "bun";
 import { Database } from "bun:sqlite";
-import { SERVER_PORT, ED3N_TOKEN_SYMBOL, ED3N_TOKEN_ADDRESS } from "./consts";
+import {
+	SERVER_PORT,
+	ED3N_TOKEN_SYMBOL,
+	ED3N_TOKEN_ADDRESS,
+	POLYGON_RPC_URL,
+	POLYGON_CONTRACT_ADDRESS,
+} from "./consts";
 import { SiweMessage } from "siwe";
-import { createWalletClient, http } from "viem";
+import { createWalletClient, Hex, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { polygon } from "viem/chains";
+
+// ABI for ED3NTicket contract
+const ED3N_TICKET_ABI = [
+	{
+		inputs: [],
+		stateMutability: "nonpayable",
+		type: "constructor"
+	},
+	{
+		inputs: [
+			{
+				internalType: "address",
+				name: "recipient",
+				type: "address"
+			},
+			{
+				internalType: "uint256", 
+				name: "eventId",
+				type: "uint256"
+			},
+			{
+				internalType: "string",
+				name: "tokenURI", 
+				type: "string"
+			}
+		],
+		name: "mintTicket",
+		outputs: [
+			{
+				internalType: "uint256",
+				name: "",
+				type: "uint256"
+			}
+		],
+		stateMutability: "nonpayable",
+		type: "function"
+	},
+	{
+		inputs: [
+			{
+				internalType: "uint256",
+				name: "tokenId",
+				type: "uint256"
+			}
+		],
+		name: "getEventForTicket",
+		outputs: [
+			{
+				internalType: "uint256",
+				name: "",
+				type: "uint256"
+			}
+		],
+		stateMutability: "view",
+		type: "function"
+	}
+];
 
 // Shared types between client and server
 export interface User {
@@ -48,6 +112,7 @@ export interface EventAttendee {
 	status: "pending" | "approved" | "rejected";
 	stake_amount: number; // Fixed at 1 ED3N token per attendee
 	created_at: string;
+	nft_transaction_hash?: string;
 }
 
 export interface HolderBalanceResponse {
@@ -104,6 +169,7 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'pending',
     stake_amount REAL DEFAULT 0,
     created_at TEXT NOT NULL,
+    nft_transaction_hash TEXT,
     FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
     FOREIGN KEY (attendee_email) REFERENCES users(email),
     UNIQUE(event_id, attendee_email)
@@ -114,6 +180,47 @@ db.exec(`
 const METAL_API_PUBLIC_KEY = process.env.METAL_API_PUBLIC_KEY;
 const METAL_API_PRIVATE_KEY = process.env.METAL_API_PRIVATE_KEY;
 const METAL_API_URL_BASE = "https://api.metal.build";
+
+const MASTER_POLYGON_WALLET_ADDRESS = process.env.MASTER_POLYGON_WALLET_ADDRESS;
+const MASTER_POLYGON_WALLET_PRIVATE_KEY = process.env.MASTER_POLYGON_WALLET_PRIVATE_KEY;
+
+function generateTicketSVG(event: Event, attendeeEmail: string): string {
+	// Create an SVG ticket with event details
+	const svg = `
+		<svg xmlns="http://www.w3.org/2000/svg" width="500" height="250" viewBox="0 0 500 250">
+			<rect width="100%" height="100%" fill="#3a0ca3" />
+			<text x="20" y="40" font-family="Arial" font-size="20" fill="white">ED3N EVENT TICKET</text>
+			<text x="20" y="80" font-family="Arial" font-size="16" fill="white">Event: ${event.title}</text>
+			<text x="20" y="110" font-family="Arial" font-size="16" fill="white">Date: ${event.date}</text>
+			<text x="20" y="140" font-family="Arial" font-size="16" fill="white">Location: ${event.location}</text>
+			<text x="20" y="170" font-family="Arial" font-size="16" fill="white">Attendee: ${attendeeEmail}</text>
+			<text x="20" y="200" font-family="Arial" font-size="16" fill="white">Ticket #${Date.now()}</text>
+		</svg>
+	`;
+	
+	// Convert SVG to base64 for on-chain storage
+	return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+}
+
+function generateTokenURI(event: Event, attendeeEmail: string): string {
+	const svgImage = generateTicketSVG(event, attendeeEmail);
+	
+	// Create JSON metadata
+	const metadata = {
+		name: `ED3N Ticket: ${event.title}`,
+		description: `Attendance ticket for ${event.title} on ${event.date}`,
+		image: svgImage,
+		attributes: [
+			{ trait_type: "Event Name", value: event.title },
+			{ trait_type: "Event Date", value: event.date },
+			{ trait_type: "Location", value: event.location },
+			{ trait_type: "Attendee", value: attendeeEmail }
+		]
+	};
+	
+	return `data:application/json;base64,${Buffer.from(JSON.stringify(metadata)).toString('base64')}`;
+}
+
 
 // CORS headers helper function
 function addCorsHeaders(response: Response): Response {
@@ -887,6 +994,51 @@ serve({
 							console.error(`${ED3N_TOKEN_SYMBOL} spending failed:`, error);
 							// We will still allow the user to join but log the error
 							// In a production system, you might want to roll back the join if the staking fails
+						}
+					}
+
+					// After successfully joining the event, mint NFT ticket
+					if (!MASTER_POLYGON_WALLET_PRIVATE_KEY) {
+						console.error("Missing wallet private key for NFT minting");
+					} else {
+						const account = privateKeyToAccount(
+							MASTER_POLYGON_WALLET_PRIVATE_KEY as Hex,
+						);
+
+						// Create wallet client
+						const client = createWalletClient({
+							account,
+							chain: polygon,
+							transport: http(POLYGON_RPC_URL),
+						});
+
+						// Get user's wallet address
+						const user = db
+							.query("SELECT * FROM users WHERE email = ?")
+							.get(attendee_email) as User;
+
+						if (user && user.wallet_address) {
+							try {
+								// Generate token URI with event data
+								const tokenURI = generateTokenURI(event, attendee_email);
+
+								// Mint NFT
+								const hash = await client.writeContract({
+									address: POLYGON_CONTRACT_ADDRESS,
+									abi: ED3N_TICKET_ABI,
+									functionName: "mintTicket",
+									args: [user.wallet_address, BigInt(id), tokenURI],
+								});
+
+								console.log(`NFT minted for event ${id}, transaction: ${hash}`);
+
+								// Save NFT information in the database
+								db.query(
+									"UPDATE event_attendees SET nft_transaction_hash = ? WHERE event_id = ? AND attendee_email = ?",
+								).run(hash, id, attendee_email);
+							} catch (error) {
+								console.error("NFT minting error:", error);
+							}
 						}
 					}
 
