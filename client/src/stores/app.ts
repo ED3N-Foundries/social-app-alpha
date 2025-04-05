@@ -78,9 +78,11 @@ export const useAppStore = defineStore("app", () => {
 				`${SERVER_HOST_URI}${Routes.metalHolderBalance(email.value)}`,
 			);
 
+			console.log("Token balance response:", response);
 			if (!response.ok) throw new Error("Failed to fetch token balance");
 
 			const data = await response.json();
+			console.log("Token balance data:", data);
 			tokens.value = data.tokens || [];
 			totalValue.value = data.totalValue || 0;
 		} catch (err) {

@@ -11,7 +11,7 @@
       <div class="d-flex align-center">
         <span class="mr-2">Powered by</span>
         <img src="@/assets/polygon_logo.png" alt="Polygon" height="60" class="mx-1 mt-1" />
-        <img src="@/assets/metal_logo.svg" alt="Metal" height="45" class="ml-1 mb-1" />
+        <img src="@/assets/metal_logo_gradient_blue.png" alt="Metal" height="45" class="ml-1 mb-1" />
       </div>
     </v-app-bar>
 

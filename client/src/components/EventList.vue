@@ -58,41 +58,8 @@
                   {{ event.description || 'No description provided' }}
                 </v-card-text>
 
-                <!-- Staking progress -->
-                <v-card-text v-if="event.stake_amount > 0">
-                  <div class="d-flex align-center mb-1">
-                    <span class="text-subtitle-2 mr-2">$ED3N {{ event.stake_amount }}</span>
-                    <v-spacer></v-spacer>
-                    <span class="text-subtitle-2">{{ event.total_staked }} / {{ event.pending_stake + event.total_staked }}</span>
-                  </div>
-
-                  <v-progress-linear
-                    height="8"
-                    rounded
-                  >
-                    <template v-slot:default>
-                      <div class="custom-progress-container">
-                        <div
-                          class="custom-progress-value-staked"
-                          :style="{ width: `${(event.total_staked / (event.pending_stake + event.total_staked || 1)) * 100}%` }"
-                        ></div>
-                        <div
-                          class="custom-progress-value-pending"
-                          :style="{ width: `${(event.pending_stake / (event.pending_stake + event.total_staked || 1)) * 100}%` }"
-                        ></div>
-                      </div>
-                    </template>
-                  </v-progress-linear>
-
-                  <div class="d-flex align-center mt-1">
-                    <span class="text-caption"><v-icon small color="success">mdi-check</v-icon> Staked</span>
-                    <v-spacer></v-spacer>
-                    <span class="text-caption"><v-icon small color="warning">mdi-clock</v-icon> Pending</span>
-                  </div>
-                </v-card-text>
-
                 <!-- Attendee limit progress -->
-                <v-card-text>
+                <v-card-text v-if="event.stake_amount > 0">
                   <div class="d-flex align-center mb-1">
                     <span class="text-subtitle-2 mr-2">Attendee Limit: {{ event.stake_amount }}</span>
                     <v-spacer></v-spacer>
@@ -124,6 +91,19 @@
                     <v-spacer></v-spacer>
                     <span class="text-caption"><v-icon small color="warning">mdi-clock</v-icon> Pending</span>
                   </div>
+                </v-card-text>
+
+                <!-- Staking information -->
+                <v-card-text v-if="event.stake_amount > 0">
+                  <v-alert
+                    color="info"
+                    icon="mdi-information"
+                    variant="tonal"
+                    class="my-1"
+                    density="compact"
+                  >
+                    Joining this event requires staking {{ event.stake_amount }} $ED3N tokens
+                  </v-alert>
                 </v-card-text>
 
                 <!-- Attendees section -->
@@ -255,11 +235,20 @@
 
                     <v-text-field
                       v-model.number="editingEvent.stake_amount"
+                      label="Stake Amount"
+                      type="number"
+                      min="0"
+                      :rules="[(v: number) => v >= 0 || 'Limit must be a positive number']"
+                      hint="Amount of $ED3N tokens required to attend this event"
+                    ></v-text-field>
+
+                    <v-text-field
+                      v-model.number="editingEvent.attendee_limit"
                       label="Attendee Limit"
                       type="number"
                       min="0"
                       :rules="[(v: number) => v >= 0 || 'Limit must be a positive number']"
-                      hint="Maximum number of attendees allowed"
+                      hint="Maximum number of attendees allowed for this event"
                     ></v-text-field>
                   </v-form>
                 </v-card-text>
@@ -343,7 +332,7 @@
               type="number"
               min="0"
               :rules="[(v: number) => v >= 0 || 'Limit must be a positive number']"
-              hint="Maximum number of attendees allowed"
+              hint="Maximum number of attendees allowed for this event"
             ></v-text-field>
           </v-form>
         </v-card-text>
@@ -376,14 +365,23 @@
           <p>You are about to join the event <strong>{{ eventToJoin?.title }}</strong>.</p>
 
           <v-alert
-            v-if="eventToJoin?.stake_amount"
+            v-if="eventToJoin?.attendee_limit"
             color="info"
             icon="mdi-account-group"
             variant="tonal"
             class="my-3"
           >
-            This event has a limit of <strong>{{ eventToJoin?.stake_amount }}</strong> attendees.
+            This event has a limit of <strong>{{ eventToJoin?.attendee_limit }}</strong> attendees.
             Current status: <strong>{{ getApprovedCount(eventToJoin) }}</strong> approved / <strong>{{ getPendingCount(eventToJoin) }}</strong> pending
+          </v-alert>
+
+          <v-alert
+            color="warning"
+            icon="mdi-currency-usd"
+            variant="tonal"
+            class="my-3"
+          >
+            Joining this event requires staking <strong>{{ eventToJoin?.stake_amount }} $ED3N tokens</strong>. This token will be held in escrow until your attendance is approved or rejected.
           </v-alert>
 
           <p class="text-caption mt-2">By joining, you agree to the event's terms and conditions.</p>
@@ -495,12 +493,12 @@ const editingEvent = reactive({
 });
 
 const newEvent = reactive({
-	title: "",
-	description: "",
-	date: "",
-	location: "",
-	image_url: "",
-	stake_amount: 0,
+	title: "Party Time!",
+	description: "Come join us for a night of fun and games!",
+	date: "2025-05-01T19:00:00",
+	location: "123 Main St, Anytown, USA",
+	image_url: "https://via.placeholder.com/150",
+	stake_amount: 20,
 });
 
 const showDeleteDialog = ref(false);

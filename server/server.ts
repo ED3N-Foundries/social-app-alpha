@@ -1,7 +1,13 @@
 // Import required Bun modules
 import { serve } from "bun";
 import { Database } from "bun:sqlite";
-import { SERVER_PORT } from "./consts";
+import {
+	SERVER_PORT,
+	SERVER_WALLET_EMAIL,
+	ED3N_TOKEN_SYMBOL,
+	ED3N_TOKEN_ADDRESS,
+	ED3N_INITIAL_GRANT,
+} from "./consts";
 import { SiweMessage } from "siwe";
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -32,9 +38,12 @@ export interface Event {
 	image_url?: string;
 	creator_email: string;
 	created_at: string;
-	stake_amount: number; // Now represents attendee limit
-	total_staked: number; // Now represents approved attendees count
-	pending_stake: number; // Now represents pending attendees count
+	pending_attendees: number;
+	approved_attendees: number;
+	rejected_attendees: number;
+	stake_amount: number; // Represents attendee limit
+	total_staked: number; // Represents approved attendees count
+	pending_stake: number; // Represents pending attendees count
 }
 
 export interface EventAttendee {
@@ -42,7 +51,7 @@ export interface EventAttendee {
 	event_id: number;
 	attendee_email: string;
 	status: "pending" | "approved" | "rejected";
-	stake_amount: number;
+	stake_amount: number; // Fixed at 1 ED3N token per attendee
 	created_at: string;
 }
 
@@ -109,7 +118,6 @@ db.exec(`
 const METAL_API_PUBLIC_KEY = process.env.METAL_API_PUBLIC_KEY;
 const METAL_API_PRIVATE_KEY = process.env.METAL_API_PRIVATE_KEY;
 const METAL_API_URL_BASE = "https://api.metal.build";
-const ED3N_TOKEN_ADDRESS = process.env.ED3N_TOKEN_ADDRESS || "0xED3N"; // Use env variable or placeholder
 
 // CORS headers helper function
 function addCorsHeaders(response: Response): Response {
@@ -126,6 +134,105 @@ function addCorsHeaders(response: Response): Response {
 		statusText: response.statusText,
 		headers,
 	});
+}
+
+// Helper function to ensure system wallet exists
+async function ensureSystemWallet() {
+	if (!METAL_API_PRIVATE_KEY) {
+		throw new Error("METAL_API_PRIVATE_KEY is not set");
+	}
+
+	try {
+		// First check if system wallet already exists
+		const user = db
+			.query("SELECT * FROM users WHERE email = ?")
+			.get(SERVER_WALLET_EMAIL) as User | null;
+
+		if (user) {
+			return user.wallet_address;
+		}
+
+		// Create a new holder with Metal API for the system wallet
+		const response = await fetch(
+			`${METAL_API_URL_BASE}/holder/${encodeURIComponent(SERVER_WALLET_EMAIL)}?privateKey=${METAL_API_PRIVATE_KEY}`,
+			{
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/json",
+					"x-api-key": METAL_API_PRIVATE_KEY,
+				},
+			},
+		);
+
+		if (!response.ok) {
+			throw new Error(`Metal API error: ${response.status}`);
+		}
+
+		const holder = (await response.json()) as MetalHolderResponse;
+
+		// Save the system wallet address in the database
+		db.query(
+			"INSERT INTO users (email, wallet_address, created_at) VALUES (?, ?, ?)",
+		).run(SERVER_WALLET_EMAIL, holder.address, new Date().toISOString());
+
+		console.log(`System wallet created with address: ${holder.address}`);
+		return holder.address;
+	} catch (error) {
+		console.error("Error ensuring system wallet:", error);
+		throw error;
+	}
+}
+
+// Helper function to distribute initial token grant to new users
+async function distributeInitialTokens(userEmail: string) {
+	if (!METAL_API_PRIVATE_KEY) {
+		throw new Error("METAL_API_PRIVATE_KEY is not set");
+	}
+
+	try {
+		// Get user wallet address
+		const user = db
+			.query("SELECT * FROM users WHERE email = ?")
+			.get(userEmail) as User | null;
+
+		if (!user || !user.wallet_address) {
+			throw new Error("User wallet address not found");
+		}
+
+		// Use the distribute endpoint directly
+		const response = await fetch(
+			`${METAL_API_URL_BASE}/token/${ED3N_TOKEN_ADDRESS}/distribute`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"x-api-key": METAL_API_PRIVATE_KEY,
+				},
+				body: JSON.stringify({
+					sendTo: user.wallet_address,
+					amount: ED3N_INITIAL_GRANT,
+				}),
+			},
+		);
+
+		if (!response.ok) {
+			throw new Error(`Metal API error: ${response.status}`);
+		}
+
+		const distributionResult = await response.json();
+
+		console.log(
+			`Distributed ${ED3N_INITIAL_GRANT} ${ED3N_TOKEN_SYMBOL} to new user ${userEmail}:`,
+			distributionResult,
+		);
+		return distributionResult;
+	} catch (error) {
+		console.error(
+			`Failed to distribute initial ${ED3N_TOKEN_SYMBOL} tokens to ${userEmail}:`,
+			error,
+		);
+		throw error;
+	}
 }
 
 // Helper function for Metal API token transfers
@@ -173,6 +280,14 @@ async function transferTokens(
 serve({
 	port: SERVER_PORT,
 	async fetch(req, server) {
+		// Ensure system wallet exists when server starts
+		try {
+			await ensureSystemWallet();
+			console.log("System wallet is ready");
+		} catch (error) {
+			console.error("Failed to initialize system wallet:", error);
+		}
+
 		// Handle CORS preflight requests
 		if (req.method === "OPTIONS") {
 			return new Response(null, {
@@ -234,9 +349,8 @@ serve({
 					}
 
 					let user: User;
-					// Create a new holder wallet using Metal API
+					// Create a new holder with Metal API - using email as the holder ID
 					try {
-						// Create a new holder with Metal API - using email as the holder ID
 						const response = await fetch(
 							`${METAL_API_URL_BASE}/holder/${encodeURIComponent(email)}?privateKey=${METAL_API_PRIVATE_KEY}`,
 							{
@@ -264,6 +378,15 @@ serve({
 							wallet_address: holder.address,
 							created_at: new Date().toISOString(),
 						};
+
+						// Distribute initial tokens to the new user - After user is created and saved
+						try {
+							await distributeInitialTokens(email);
+						} catch (tokenError) {
+							console.error("Error distributing initial tokens:", tokenError);
+							// We'll still return success even if token distribution fails
+							// The user account is created, but they might not have received tokens
+						}
 					} catch (error) {
 						console.error("Error creating wallet:", error);
 						throw error;
@@ -274,6 +397,8 @@ serve({
 							success: true,
 							email: user.email,
 							wallet_address: user.wallet_address,
+							initial_grant: ED3N_INITIAL_GRANT,
+							token_symbol: ED3N_TOKEN_SYMBOL,
 						}),
 					);
 				} catch (error) {
@@ -802,7 +927,7 @@ serve({
 						id,
 						attendee_email,
 						"pending",
-						event.stake_amount,
+						event.stake_amount, // Amount to stake
 						new Date().toISOString(),
 					);
 
@@ -812,20 +937,28 @@ serve({
 					).run(id);
 
 					// Implement Metal API token staking
-					// For joining an event, we'll stake tokens from the attendee to a system wallet or event creator
+					// Transfer tokens from the attendee to the system wallet (not to the event creator)
 					if (event.stake_amount > 0) {
 						try {
-							// Using the event creator as the recipient of the stake
+							// Ensure system wallet exists
+							await ensureSystemWallet();
+
+							// Transfer tokens from attendee to system wallet (escrow)
+							// Note: We stake a fixed 1 ED3N token regardless of event.stake_amount
+							// event.stake_amount is used only as attendee limit
 							const stakeResult = await transferTokens(
 								attendee_email,
-								event.creator_email,
-								1, // Fixed amount of 1 ED3N token for now
+								SERVER_WALLET_EMAIL, // Using system wallet as escrow
+								event.stake_amount, // Amount to stake
 								`Stake for event ${id}`,
 							);
 
-							console.log("Staking completed:", stakeResult);
+							console.log(
+								`${ED3N_TOKEN_SYMBOL} staking completed:`,
+								stakeResult,
+							);
 						} catch (error) {
-							console.error("Staking failed:", error);
+							console.error(`${ED3N_TOKEN_SYMBOL} staking failed:`, error);
 							// We will still allow the user to join but log the error
 							// In a production system, you might want to roll back the join if the staking fails
 						}
@@ -960,23 +1093,23 @@ serve({
 					// Update the event's staking amounts - now updating attendee counts
 					db.query(`
 						UPDATE events SET 
-						pending_stake = pending_stake - 1,
-						total_staked = total_staked + 1
+						pending_stake = pending_stake - ?,
+						total_staked = total_staked + ?
 						WHERE id = ?
-					`).run(id);
+					`).run(event.stake_amount, event.stake_amount, id);
 
-					// Implement Metal API staking confirmation
-					// For approving an attendee, we can mark the stake as confirmed or transfer tokens to a different wallet
+					// In the updated flow, we're not transferring tokens from the system wallet
+					// when approving - we keep them there until the event is completed
+					// or the attendee is rejected
 					if (event.stake_amount > 0) {
 						try {
-							// In this case, we're not transferring additional tokens, just marking the stake as confirmed
-							// If your system requires additional transfers, you would implement that here
+							// Just log the approval, tokens remain in system wallet
+							// Note: The fixed 1 ED3N token that was staked remains in the system wallet
 							console.log(
-								`Stake confirmed for attendee ${attendee_email} in event ${id}`,
+								`Stake confirmed for attendee ${attendee_email} in event ${id}. Tokens remain in system wallet.`,
 							);
 						} catch (error) {
 							console.error("Stake confirmation failed:", error);
-							// We will still approve the attendee but log the error
 						}
 					}
 
@@ -1075,20 +1208,27 @@ serve({
 					).run(id);
 
 					// Implement Metal API refund
-					// For rejecting an attendee, we need to return the staked tokens
+					// When rejecting, we return tokens from system wallet to the attendee
 					if (event.stake_amount > 0) {
 						try {
-							// Refund the stakes from creator back to the attendee
+							// Ensure system wallet exists
+							await ensureSystemWallet();
+
+							// Refund the stakes from system wallet back to the attendee
+							// Note: We refund the fixed 1 ED3N token that was staked
 							const refundResult = await transferTokens(
-								event.creator_email,
-								attendee_email,
-								1, // Fixed amount of 1 ED3N token for now
+								SERVER_WALLET_EMAIL, // From system wallet
+								attendee_email, // To the attendee
+								event.stake_amount, // Amount to refund
 								`Refund for event ${id}`,
 							);
 
-							console.log("Refund completed:", refundResult);
+							console.log(
+								`${ED3N_TOKEN_SYMBOL} refund completed:`,
+								refundResult,
+							);
 						} catch (error) {
-							console.error("Refund failed:", error);
+							console.error(`${ED3N_TOKEN_SYMBOL} refund failed:`, error);
 							// We will still reject the attendee but log the error
 						}
 					}
