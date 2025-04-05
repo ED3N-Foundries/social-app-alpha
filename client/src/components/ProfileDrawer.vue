@@ -7,7 +7,7 @@
   >
     <v-list>
       <v-list-item
-        prepend-avatar="https://randomuser.me/api/portraits/men/78.jpg"
+        prepend-avatar="@/assets/placeholder_avatar.png"
         :title="userEmail"
         :subtitle="walletAddress"
       >
@@ -24,17 +24,13 @@
     <v-divider></v-divider>
 
     <v-list>
-      <v-list-subheader>Wallet Info</v-list-subheader>
-
-      <v-divider></v-divider>
-
       <v-list-subheader>Token Balances</v-list-subheader>
 
       <v-list-item v-if="isLoadingBalance">
         <template v-slot:prepend>
           <v-progress-circular indeterminate></v-progress-circular>
         </template>
-        <v-list-item-title>Loading balances...</v-list-item-title>
+        <v-list-item-title class="ml-2">Loading balances...</v-list-item-title>
       </v-list-item>
 
       <template v-else-if="tokens.length > 0">
@@ -65,7 +61,7 @@
 
       <v-list-item v-else>
         <v-list-item-title>No tokens found</v-list-item-title>
-        <v-list-item-subtitle>Your wallet is empty</v-list-item-subtitle>
+        <v-list-item-subtitle>Your wallet is empty :(</v-list-item-subtitle>
       </v-list-item>
 
       <v-list-item v-if="error" class="text-error">
