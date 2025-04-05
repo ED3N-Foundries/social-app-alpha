@@ -1,5 +1,6 @@
 export const SERVER_PORT = 3000;
 export const SERVER_HOST_URI = `http://localhost:${SERVER_PORT}`;
+export const SERVER_WALLET_EMAIL = "REDACTED@gmail.com";
 export const CLIENT_PREVIEW_PORT = 5173;
 export const CLIENT_DEV_PORT = 5174;
 
@@ -18,4 +19,9 @@ export const Routes = {
 	createEvent: () => "/events/create",
 	updateEvent: (id: string) => `/events/${id}/update`,
 	deleteEvent: (id: string) => `/events/${id}/delete`,
+	// Event attendee routes
+	joinEvent: (id: string) => `/events/${id}/join`,
+	getEventAttendees: (id: string) => `/events/${id}/attendees`,
+	approveAttendee: (id: string) => `/events/${id}/approve-attendee`,
+	rejectAttendee: (id: string) => `/events/${id}/reject-attendee`,
 };

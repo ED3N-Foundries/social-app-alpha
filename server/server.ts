@@ -32,6 +32,18 @@ export interface Event {
 	image_url?: string;
 	creator_email: string;
 	created_at: string;
+	stake_amount: number; // Now represents attendee limit
+	total_staked: number; // Now represents approved attendees count
+	pending_stake: number; // Now represents pending attendees count
+}
+
+export interface EventAttendee {
+	id?: number;
+	event_id: number;
+	attendee_email: string;
+	status: "pending" | "approved" | "rejected";
+	stake_amount: number;
+	created_at: string;
 }
 
 export interface HolderBalanceResponse {
@@ -72,7 +84,24 @@ db.exec(`
     image_url TEXT,
     creator_email TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    stake_amount REAL DEFAULT 0,
+    total_staked REAL DEFAULT 0,
+    pending_stake REAL DEFAULT 0,
     FOREIGN KEY (creator_email) REFERENCES users(email)
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS event_attendees (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    attendee_email TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    stake_amount REAL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY (attendee_email) REFERENCES users(email),
+    UNIQUE(event_id, attendee_email)
   )
 `);
 
@@ -80,6 +109,7 @@ db.exec(`
 const METAL_API_PUBLIC_KEY = process.env.METAL_API_PUBLIC_KEY;
 const METAL_API_PRIVATE_KEY = process.env.METAL_API_PRIVATE_KEY;
 const METAL_API_URL_BASE = "https://api.metal.build";
+const ED3N_TOKEN_ADDRESS = process.env.ED3N_TOKEN_ADDRESS || "0xED3N"; // Use env variable or placeholder
 
 // CORS headers helper function
 function addCorsHeaders(response: Response): Response {
@@ -96,6 +126,47 @@ function addCorsHeaders(response: Response): Response {
 		statusText: response.statusText,
 		headers,
 	});
+}
+
+// Helper function for Metal API token transfers
+async function transferTokens(
+	fromEmail: string,
+	toEmail: string,
+	amount: number,
+	reference: string,
+) {
+	if (!METAL_API_PRIVATE_KEY) {
+		throw new Error("METAL_API_PRIVATE_KEY is not set");
+	}
+
+	try {
+		const response = await fetch(
+			`${METAL_API_URL_BASE}/tokens/transfer?privateKey=${METAL_API_PRIVATE_KEY}`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"x-api-key": METAL_API_PRIVATE_KEY,
+				},
+				body: JSON.stringify({
+					fromHolderId: fromEmail,
+					toHolderId: toEmail,
+					tokenAddress: ED3N_TOKEN_ADDRESS,
+					amount: amount.toString(),
+					reference: reference,
+				}),
+			},
+		);
+
+		if (!response.ok) {
+			throw new Error(`Metal API error: ${response.status}`);
+		}
+
+		return await response.json();
+	} catch (error) {
+		console.error("Error transferring tokens:", error);
+		throw error;
+	}
 }
 
 // Start the server
@@ -365,6 +436,7 @@ serve({
 						location,
 						image_url,
 						creator_email,
+						stake_amount,
 					} = await req.json();
 
 					if (!title || !date || !creator_email) {
@@ -398,7 +470,9 @@ serve({
 					// Insert the new event
 					const result = db
 						.query(
-							"INSERT INTO events (title, description, date, location, image_url, creator_email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+							`INSERT INTO events (
+                title, description, date, location, image_url, creator_email, created_at, stake_amount
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 						)
 						.run(
 							title,
@@ -408,6 +482,7 @@ serve({
 							image_url || "",
 							creator_email,
 							new Date().toISOString(),
+							stake_amount || 0,
 						);
 
 					// Get the newly created event
@@ -455,7 +530,17 @@ serve({
 						);
 					}
 
-					return addCorsHeaders(Response.json(event));
+					// Get attendees for this event
+					const attendees = db
+						.query("SELECT * FROM event_attendees WHERE event_id = ?")
+						.all(id) as EventAttendee[];
+
+					return addCorsHeaders(
+						Response.json({
+							...event,
+							attendees,
+						}),
+					);
 				} catch (error) {
 					console.error("Get event error:", error);
 					return addCorsHeaders(
@@ -479,6 +564,7 @@ serve({
 						location,
 						image_url,
 						creator_email,
+						stake_amount,
 					} = await req.json();
 
 					if (!id) {
@@ -521,13 +607,23 @@ serve({
 
 					// Update the event
 					db.query(
-						"UPDATE events SET title = ?, description = ?, date = ?, location = ?, image_url = ? WHERE id = ?",
+						`UPDATE events SET 
+              title = ?, 
+              description = ?, 
+              date = ?, 
+              location = ?, 
+              image_url = ?,
+              stake_amount = ?
+            WHERE id = ?`,
 					).run(
 						title || existingEvent.title,
 						description !== undefined ? description : existingEvent.description,
 						date || existingEvent.date,
 						location !== undefined ? location : existingEvent.location,
 						image_url !== undefined ? image_url : existingEvent.image_url,
+						stake_amount !== undefined
+							? stake_amount
+							: existingEvent.stake_amount,
 						id,
 					);
 
@@ -609,6 +705,407 @@ serve({
 							status: 500,
 							headers: { "Content-Type": "application/json" },
 						}),
+					);
+				}
+			},
+		},
+
+		// Event attendee endpoints
+		"/events/:id/join": {
+			POST: async (req) => {
+				try {
+					const { id } = req.params;
+					const { attendee_email } = await req.json();
+
+					if (!id || !attendee_email) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: "Event ID and attendee email are required",
+								}),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Get the event
+					const event = db
+						.query("SELECT * FROM events WHERE id = ?")
+						.get(id) as Event | null;
+
+					if (!event) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Check if the event has reached its attendee limit
+					const approvedCount = db
+						.query(
+							"SELECT COUNT(*) as count FROM event_attendees WHERE event_id = ? AND status = 'approved'",
+						)
+						.get(id) as { count: number };
+
+					const pendingCount = db
+						.query(
+							"SELECT COUNT(*) as count FROM event_attendees WHERE event_id = ? AND status = 'pending'",
+						)
+						.get(id) as { count: number };
+
+					const totalCount = approvedCount.count + pendingCount.count;
+
+					if (event.stake_amount > 0 && totalCount >= event.stake_amount) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: "Event has reached its attendee limit",
+								}),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Check if user is already an attendee
+					const existingAttendee = db
+						.query(
+							"SELECT * FROM event_attendees WHERE event_id = ? AND attendee_email = ?",
+						)
+						.get(id, attendee_email) as EventAttendee | null;
+
+					if (existingAttendee) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({ error: "Already joined this event" }),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Add attendee to the event with pending status
+					db.query(
+						`INSERT INTO event_attendees (
+							event_id, attendee_email, status, stake_amount, created_at
+						) VALUES (?, ?, ?, ?, ?)`,
+					).run(
+						id,
+						attendee_email,
+						"pending",
+						event.stake_amount,
+						new Date().toISOString(),
+					);
+
+					// Update the event's pending stake amount - now incrementing attendee count
+					db.query(
+						"UPDATE events SET pending_stake = pending_stake + 1 WHERE id = ?",
+					).run(id);
+
+					// Implement Metal API token staking
+					// For joining an event, we'll stake tokens from the attendee to a system wallet or event creator
+					if (event.stake_amount > 0) {
+						try {
+							// Using the event creator as the recipient of the stake
+							const stakeResult = await transferTokens(
+								attendee_email,
+								event.creator_email,
+								1, // Fixed amount of 1 ED3N token for now
+								`Stake for event ${id}`,
+							);
+
+							console.log("Staking completed:", stakeResult);
+						} catch (error) {
+							console.error("Staking failed:", error);
+							// We will still allow the user to join but log the error
+							// In a production system, you might want to roll back the join if the staking fails
+						}
+					}
+
+					return addCorsHeaders(
+						Response.json({
+							success: true,
+							message: "Successfully joined the event",
+						}),
+					);
+				} catch (error) {
+					console.error("Join event error:", error);
+					return addCorsHeaders(
+						new Response(JSON.stringify({ error: "Failed to join event" }), {
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+			},
+		},
+
+		"/events/:id/attendees": {
+			GET: (req) => {
+				try {
+					const { id } = req.params;
+
+					if (!id) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event ID is required" }), {
+								status: 400,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Get the attendees for this event
+					const attendees = db
+						.query(`
+              SELECT ea.*, u.wallet_address
+              FROM event_attendees ea
+              JOIN users u ON ea.attendee_email = u.email
+              WHERE ea.event_id = ?
+            `)
+						.all(id) as (EventAttendee & { wallet_address: string })[];
+
+					return addCorsHeaders(Response.json(attendees));
+				} catch (error) {
+					console.error("Get attendees error:", error);
+					return addCorsHeaders(
+						new Response(
+							JSON.stringify({ error: "Failed to retrieve attendees" }),
+							{ status: 500, headers: { "Content-Type": "application/json" } },
+						),
+					);
+				}
+			},
+		},
+
+		"/events/:id/approve-attendee": {
+			PUT: async (req) => {
+				try {
+					const { id } = req.params;
+					const { attendee_email, creator_email } = await req.json();
+
+					if (!id || !attendee_email || !creator_email) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error:
+										"Event ID, attendee email, and creator email are required",
+								}),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Get the event
+					const event = db
+						.query("SELECT * FROM events WHERE id = ?")
+						.get(id) as Event | null;
+
+					if (!event) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Check if user is the event creator
+					if (creator_email !== event.creator_email) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: "Only the event creator can approve attendees",
+								}),
+								{
+									status: 403,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Get the attendee
+					const attendee = db
+						.query(
+							"SELECT * FROM event_attendees WHERE event_id = ? AND attendee_email = ?",
+						)
+						.get(id, attendee_email) as EventAttendee | null;
+
+					if (!attendee) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Attendee not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Update attendee status to approved
+					db.query(
+						"UPDATE event_attendees SET status = 'approved' WHERE event_id = ? AND attendee_email = ?",
+					).run(id, attendee_email);
+
+					// Update the event's staking amounts - now updating attendee counts
+					db.query(`
+						UPDATE events SET 
+						pending_stake = pending_stake - 1,
+						total_staked = total_staked + 1
+						WHERE id = ?
+					`).run(id);
+
+					// Implement Metal API staking confirmation
+					// For approving an attendee, we can mark the stake as confirmed or transfer tokens to a different wallet
+					if (event.stake_amount > 0) {
+						try {
+							// In this case, we're not transferring additional tokens, just marking the stake as confirmed
+							// If your system requires additional transfers, you would implement that here
+							console.log(
+								`Stake confirmed for attendee ${attendee_email} in event ${id}`,
+							);
+						} catch (error) {
+							console.error("Stake confirmation failed:", error);
+							// We will still approve the attendee but log the error
+						}
+					}
+
+					return addCorsHeaders(
+						Response.json({
+							success: true,
+							message: "Attendee approved successfully",
+						}),
+					);
+				} catch (error) {
+					console.error("Approve attendee error:", error);
+					return addCorsHeaders(
+						new Response(
+							JSON.stringify({ error: "Failed to approve attendee" }),
+							{ status: 500, headers: { "Content-Type": "application/json" } },
+						),
+					);
+				}
+			},
+		},
+
+		"/events/:id/reject-attendee": {
+			PUT: async (req) => {
+				try {
+					const { id } = req.params;
+					const { attendee_email, creator_email } = await req.json();
+
+					if (!id || !attendee_email || !creator_email) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error:
+										"Event ID, attendee email, and creator email are required",
+								}),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Get the event
+					const event = db
+						.query("SELECT * FROM events WHERE id = ?")
+						.get(id) as Event | null;
+
+					if (!event) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Check if user is the event creator
+					if (creator_email !== event.creator_email) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: "Only the event creator can reject attendees",
+								}),
+								{
+									status: 403,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Get the attendee
+					const attendee = db
+						.query(
+							"SELECT * FROM event_attendees WHERE event_id = ? AND attendee_email = ?",
+						)
+						.get(id, attendee_email) as EventAttendee | null;
+
+					if (!attendee) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Attendee not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Update attendee status to rejected
+					db.query(
+						"UPDATE event_attendees SET status = 'rejected' WHERE event_id = ? AND attendee_email = ?",
+					).run(id, attendee_email);
+
+					// Update the event's pending stake amount - now updating attendee count
+					db.query(
+						"UPDATE events SET pending_stake = pending_stake - 1 WHERE id = ?",
+					).run(id);
+
+					// Implement Metal API refund
+					// For rejecting an attendee, we need to return the staked tokens
+					if (event.stake_amount > 0) {
+						try {
+							// Refund the stakes from creator back to the attendee
+							const refundResult = await transferTokens(
+								event.creator_email,
+								attendee_email,
+								1, // Fixed amount of 1 ED3N token for now
+								`Refund for event ${id}`,
+							);
+
+							console.log("Refund completed:", refundResult);
+						} catch (error) {
+							console.error("Refund failed:", error);
+							// We will still reject the attendee but log the error
+						}
+					}
+
+					return addCorsHeaders(
+						Response.json({
+							success: true,
+							message: "Attendee rejected successfully",
+						}),
+					);
+				} catch (error) {
+					console.error("Reject attendee error:", error);
+					return addCorsHeaders(
+						new Response(
+							JSON.stringify({ error: "Failed to reject attendee" }),
+							{ status: 500, headers: { "Content-Type": "application/json" } },
+						),
 					);
 				}
 			},
