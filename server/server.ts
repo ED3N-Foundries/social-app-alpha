@@ -1,22 +1,13 @@
 // Import required Bun modules
 import { serve } from "bun";
 import { Database } from "bun:sqlite";
-
-// Define interfaces for TypeScript type safety
-interface User {
-	id?: number;
-	email: string;
-	wallet_address: string;
-	created_at: string;
-}
-
-interface MetalHolderResponse {
-	address: string;
-	id?: string;
-	userId?: string;
-	createdAt?: string;
-	updatedAt?: string;
-}
+import {
+	type User,
+	type MetalHolderResponse,
+	type TokenBalance,
+	type HolderBalanceResponse,
+	SERVER_PORT,
+} from "../types";
 
 // Initialize SQLite database
 const db = new Database("app.db");
@@ -45,6 +36,23 @@ const MASTER_POLYGON_WALLET_ADDRESS = process.env.MASTER_POLYGON_WALLET_ADDRESS;
 const MASTER_POLYGON_WALLET_PRIVATE_KEY =
 	process.env.MASTER_POLYGON_WALLET_PRIVATE_KEY;
 const MASTER_POLYGON_RPC_URL_BASE = "https://polygon-rpc.com";
+
+// CORS headers helper function
+function addCorsHeaders(response: Response): Response {
+	const headers = new Headers(response.headers);
+	headers.set("Access-Control-Allow-Origin", "*");
+	headers.set(
+		"Access-Control-Allow-Methods",
+		"GET, POST, PUT, DELETE, OPTIONS",
+	);
+	headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+	return new Response(response.body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers,
+	});
+}
 
 // Helper function to get or create a wallet for a user
 async function getOrCreateWallet(email: string): Promise<User> {
@@ -99,10 +107,28 @@ async function getOrCreateWallet(email: string): Promise<User> {
 
 // Start the server
 serve({
-	port: 3000,
+	port: SERVER_PORT,
+	async fetch(req, server) {
+		// Handle CORS preflight requests
+		if (req.method === "OPTIONS") {
+			return new Response(null, {
+				status: 204,
+				headers: {
+					"Access-Control-Allow-Origin": "*",
+					"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+					"Access-Control-Allow-Headers": "Content-Type, Authorization",
+					"Access-Control-Max-Age": "86400",
+				},
+			});
+		}
+
+		// Continue with normal request handling
+		const response = await server.fetch(req);
+		return addCorsHeaders(response);
+	},
 	routes: {
 		// Health check endpoint
-		"/health": () => new Response("OK"),
+		"/health": () => addCorsHeaders(new Response("OK")),
 
 		// Metal wallet endpoints
 		"/metal/login": {
@@ -111,24 +137,33 @@ serve({
 					const { email } = await req.json();
 
 					if (!email || typeof email !== "string") {
-						return new Response(
-							JSON.stringify({ error: "Valid email is required" }),
-							{ status: 400, headers: { "Content-Type": "application/json" } },
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({ error: "Valid email is required" }),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
 						);
 					}
 
 					const user = await getOrCreateWallet(email);
 
-					return Response.json({
-						success: true,
-						email: user.email,
-						wallet_address: user.wallet_address,
-					});
+					return addCorsHeaders(
+						Response.json({
+							success: true,
+							email: user.email,
+							wallet_address: user.wallet_address,
+						}),
+					);
 				} catch (error) {
 					console.error("Login error:", error);
-					return new Response(
-						JSON.stringify({ error: "Failed to process login" }),
-						{ status: 500, headers: { "Content-Type": "application/json" } },
+					return addCorsHeaders(
+						new Response(JSON.stringify({ error: "Failed to process login" }), {
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						}),
 					);
 				}
 			},
@@ -141,9 +176,14 @@ serve({
 					const { email } = req.params;
 
 					if (!email) {
-						return new Response(
-							JSON.stringify({ error: "Email parameter is required" }),
-							{ status: 400, headers: { "Content-Type": "application/json" } },
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({ error: "Email parameter is required" }),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
 						);
 					}
 
@@ -152,22 +192,80 @@ serve({
 						.get(email) as User | null;
 
 					if (!user) {
-						return new Response(JSON.stringify({ error: "User not found" }), {
-							status: 404,
-							headers: { "Content-Type": "application/json" },
-						});
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "User not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
 					}
 
-					return Response.json({
-						email: user.email,
-						wallet_address: user.wallet_address,
-						created_at: user.created_at,
-					});
+					return addCorsHeaders(
+						Response.json({
+							email: user.email,
+							wallet_address: user.wallet_address,
+							created_at: user.created_at,
+						}),
+					);
 				} catch (error) {
 					console.error("Get user error:", error);
-					return new Response(
-						JSON.stringify({ error: "Failed to retrieve user data" }),
-						{ status: 500, headers: { "Content-Type": "application/json" } },
+					return addCorsHeaders(
+						new Response(
+							JSON.stringify({ error: "Failed to retrieve user data" }),
+							{ status: 500, headers: { "Content-Type": "application/json" } },
+						),
+					);
+				}
+			},
+		},
+
+		// Get token balance from Metal API
+		"/metal/holder/:address/balance": {
+			GET: async (req) => {
+				try {
+					const { address } = req.params;
+
+					if (!address) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({ error: "Wallet address is required" }),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					if (!METAL_API_PUBLIC_KEY) {
+						throw new Error("METAL_API_PUBLIC_KEY is not set");
+					}
+
+					// Call Metal API to get holder's token balance
+					const response = await fetch(
+						`${METAL_API_URL_BASE}/holder/${address}?publicKey=${METAL_API_PUBLIC_KEY}`,
+						{
+							method: "GET",
+							headers: {
+								"Content-Type": "application/json",
+							},
+						},
+					);
+
+					if (!response.ok) {
+						throw new Error(`Metal API error: ${response.status}`);
+					}
+
+					const holderData = (await response.json()) as HolderBalanceResponse;
+
+					return addCorsHeaders(Response.json(holderData));
+				} catch (error) {
+					console.error("Get balance error:", error);
+					return addCorsHeaders(
+						new Response(
+							JSON.stringify({ error: "Failed to retrieve token balance" }),
+							{ status: 500, headers: { "Content-Type": "application/json" } },
+						),
 					);
 				}
 			},
@@ -180,12 +278,14 @@ serve({
 					const users = db
 						.query("SELECT email, wallet_address, created_at FROM users")
 						.all() as User[];
-					return Response.json(users);
+					return addCorsHeaders(Response.json(users));
 				} catch (error) {
 					console.error("List users error:", error);
-					return new Response(
-						JSON.stringify({ error: "Failed to list users" }),
-						{ status: 500, headers: { "Content-Type": "application/json" } },
+					return addCorsHeaders(
+						new Response(JSON.stringify({ error: "Failed to list users" }), {
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						}),
 					);
 				}
 			},
@@ -195,7 +295,9 @@ serve({
 	// Error handler
 	error(error) {
 		console.error("Server error:", error);
-		return new Response("Internal Server Error", { status: 500 });
+		return addCorsHeaders(
+			new Response("Internal Server Error", { status: 500 }),
+		);
 	},
 });
 

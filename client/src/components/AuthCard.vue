@@ -47,10 +47,9 @@
 
 <script lang="ts" setup>
 import { ref } from "vue";
-import { useRouter } from "vue-router/auto";
 import { useAppStore } from "@/stores/app";
+import { SERVER_HOST_URI } from "../../../types";
 
-const router = useRouter();
 const appStore = useAppStore();
 const email = ref("");
 const emailValid = ref(false);
@@ -70,20 +69,34 @@ const handleEmailAuth = async () => {
 
 	isLoading.value = true;
 	try {
-		// Simulate API call
-		await new Promise((resolve) => setTimeout(resolve, 1000));
+		// Call the API to login/register the user
+		const response = await fetch(`${SERVER_HOST_URI}/metal/login`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ email: email.value }),
+		});
+
+		if (!response.ok) {
+			throw new Error("Authentication failed");
+		}
+
+		await response.json(); // Process response but don't store it
 
 		// Use the Pinia store for authentication
-		// This will either login or create an account if it doesn't exist
 		appStore.login(email.value);
 
-		// Redirect to dashboard on success
-		router.push("/dashboard");
-	} catch {
+		// Show success message
+		snackbarColor.value = "success";
+		snackbarText.value = "Successfully authenticated!";
+		showSnackbar.value = true;
+	} catch (error) {
 		// Show error message
 		snackbarColor.value = "error";
 		snackbarText.value = "Authentication failed. Please try again.";
 		showSnackbar.value = true;
+		console.error("Auth error:", error);
 	} finally {
 		isLoading.value = false;
 	}
