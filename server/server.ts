@@ -18,6 +18,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
     wallet_address TEXT UNIQUE,
+    ens_name TEXT,
     created_at TEXT NOT NULL
   )
 `);
@@ -54,54 +55,99 @@ function addCorsHeaders(response: Response): Response {
 	});
 }
 
-// Helper function to get or create a wallet for a user
-async function getOrCreateWallet(email: string): Promise<User> {
-	// Check if user already exists
-	const existingUser = db
-		.query("SELECT * FROM users WHERE email = ?")
-		.get(email) as User | null;
-
-	if (existingUser) {
-		return existingUser;
+// Helper function to create or update ENS name
+async function createOrUpdateEnsName(
+	walletAddress: string,
+	ensName: string,
+): Promise<boolean> {
+	if (!NAMESTONE_API_KEY) {
+		throw new Error("NAMESTONE_API_KEY is not set");
 	}
 
-	if (!METAL_API_PRIVATE_KEY) {
-		throw new Error("METAL_API_PRIVATE_KEY is not set");
-	}
-
-	// Create a new holder wallet using Metal API
 	try {
-		// Use user's email as userId for Metal
-		const response = await fetch(
-			`${METAL_API_URL_BASE}/holder/${encodeURIComponent(email)}`,
-			{
-				method: "PUT",
-				headers: {
-					"Content-Type": "application/json",
-					"x-api-key": METAL_API_PRIVATE_KEY,
-				},
+		// Ensure the ENS name ends with .eth
+		const normalizedEnsName = ensName.endsWith(".eth")
+			? ensName
+			: `${ensName}.eth`;
+
+		// Call NameStone API to set name
+		const response = await fetch(`${NAMESTONE_API_URL_BASE}set-name`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				api_key: NAMESTONE_API_KEY,
 			},
+			body: JSON.stringify({
+				address: walletAddress,
+				domain: "eth", // Using the default .eth domain
+				name: normalizedEnsName.replace(".eth", ""), // Remove .eth since the domain is specified separately
+				text_records: {
+					description: "ENS name created via social-app-alpha",
+				},
+			}),
+		});
+
+		if (!response.ok) {
+			const errorData = await response.json();
+			console.error("NameStone API error:", errorData);
+			return false;
+		}
+
+		// Update ENS name in the database
+		db.query("UPDATE users SET ens_name = ? WHERE wallet_address = ?").run(
+			normalizedEnsName,
+			walletAddress,
+		);
+
+		return true;
+	} catch (error) {
+		console.error("Error setting ENS name:", error);
+		return false;
+	}
+}
+
+// Helper function to get ENS name for an address
+async function getEnsName(walletAddress: string): Promise<string | null> {
+	if (!NAMESTONE_API_KEY) {
+		throw new Error("NAMESTONE_API_KEY is not set");
+	}
+
+	try {
+		// First check our database
+		const user = db
+			.query("SELECT ens_name FROM users WHERE wallet_address = ?")
+			.get(walletAddress) as { ens_name: string } | null;
+
+		if (user?.ens_name) {
+			return user.ens_name;
+		}
+
+		// If not found in database, check NameStone API
+		const response = await fetch(
+			`${NAMESTONE_API_URL_BASE}get-names?address=${walletAddress}&domain=eth&api_key=${NAMESTONE_API_KEY}`,
 		);
 
 		if (!response.ok) {
-			throw new Error(`Metal API error: ${response.status}`);
+			return null;
 		}
 
-		const holder = (await response.json()) as MetalHolderResponse;
+		const data = await response.json();
+		if (data?.names?.length > 0) {
+			const ensName = `${data.names[0]}.eth`;
 
-		// Save the wallet address in the database
-		db.query(
-			"INSERT INTO users (email, wallet_address, created_at) VALUES (?, ?, ?)",
-		).run(email, holder.address, new Date().toISOString());
+			// Update our database with the ENS name
+			db.query("UPDATE users SET ens_name = ? WHERE wallet_address = ?").run(
+				ensName,
+				walletAddress,
+			);
 
-		return {
-			email,
-			wallet_address: holder.address,
-			created_at: new Date().toISOString(),
-		};
+			return ensName;
+		}
+
+		return null;
 	} catch (error) {
-		console.error("Error creating wallet:", error);
-		throw error;
+		console.error("Error getting ENS name:", error);
+		return null;
 	}
 }
 
@@ -148,13 +194,72 @@ serve({
 						);
 					}
 
-					const user = await getOrCreateWallet(email);
+					// Check if user already exists
+					const existingUser = db
+						.query("SELECT * FROM users WHERE email = ?")
+						.get(email) as User | null;
+
+					if (existingUser) {
+						// If the user exists, return the user data
+						return addCorsHeaders(
+							Response.json({
+								success: true,
+								email: existingUser.email,
+								wallet_address: existingUser.wallet_address,
+								ens_name: existingUser.ens_name,
+								created_at: existingUser.created_at,
+							}),
+						);
+					}
+
+					if (!METAL_API_PRIVATE_KEY) {
+						throw new Error("METAL_API_PRIVATE_KEY is not set");
+					}
+
+					let user: User;
+					// Create a new holder wallet using Metal API
+					try {
+						// Create a new holder with Metal API - using email as the holder ID
+						const response = await fetch(
+							`${METAL_API_URL_BASE}/holder/${encodeURIComponent(email)}?privateKey=${METAL_API_PRIVATE_KEY}`,
+							{
+								method: "PUT",
+								headers: {
+									"Content-Type": "application/json",
+									"x-api-key": METAL_API_PRIVATE_KEY,
+								},
+							},
+						);
+
+						if (!response.ok) {
+							throw new Error(`Metal API error: ${response.status}`);
+						}
+
+						const holder = (await response.json()) as MetalHolderResponse;
+
+						// Save the wallet address in the database
+						db.query(
+							"INSERT INTO users (email, wallet_address, created_at) VALUES (?, ?, ?)",
+						).run(email, holder.address, new Date().toISOString());
+
+						user = {
+							email,
+							wallet_address: holder.address,
+							created_at: new Date().toISOString(),
+						};
+					} catch (error) {
+						console.error("Error creating wallet:", error);
+						throw error;
+					}
+
+					const ensName = await getEnsName(user.wallet_address);
 
 					return addCorsHeaders(
 						Response.json({
 							success: true,
 							email: user.email,
 							wallet_address: user.wallet_address,
+							ens_name: ensName,
 						}),
 					);
 				} catch (error) {
@@ -171,7 +276,7 @@ serve({
 
 		// Get user wallet information
 		"/metal/user/:email": {
-			GET: (req) => {
+			GET: async (req) => {
 				try {
 					const { email } = req.params;
 
@@ -200,10 +305,14 @@ serve({
 						);
 					}
 
+					// Get ENS name using the wallet address
+					const ensName = await getEnsName(user.wallet_address);
+
 					return addCorsHeaders(
 						Response.json({
 							email: user.email,
 							wallet_address: user.wallet_address,
+							ens_name: ensName,
 							created_at: user.created_at,
 						}),
 					);
@@ -219,16 +328,18 @@ serve({
 			},
 		},
 
-		// Get token balance from Metal API
-		"/metal/holder/:address/balance": {
-			GET: async (req) => {
+		// Set/Update ENS name for a user
+		"/ens/set-name": {
+			POST: async (req) => {
 				try {
-					const { address } = req.params;
+					const { wallet_address, ens_name } = await req.json();
 
-					if (!address) {
+					if (!wallet_address || !ens_name) {
 						return addCorsHeaders(
 							new Response(
-								JSON.stringify({ error: "Wallet address is required" }),
+								JSON.stringify({
+									error: "Wallet address and ENS name are required",
+								}),
 								{
 									status: 400,
 									headers: { "Content-Type": "application/json" },
@@ -237,23 +348,86 @@ serve({
 						);
 					}
 
+					// Check if the user exists
+					const user = db
+						.query("SELECT * FROM users WHERE wallet_address = ?")
+						.get(wallet_address) as User | null;
+
+					if (!user) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "User not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					const success = await createOrUpdateEnsName(wallet_address, ens_name);
+
+					if (!success) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({ error: "Failed to set ENS name" }),
+								{
+									status: 500,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					return addCorsHeaders(
+						Response.json({
+							success: true,
+							wallet_address,
+							ens_name: ens_name.endsWith(".eth")
+								? ens_name
+								: `${ens_name}.eth`,
+						}),
+					);
+				} catch (error) {
+					console.error("Set ENS name error:", error);
+					return addCorsHeaders(
+						new Response(JSON.stringify({ error: "Failed to set ENS name" }), {
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+			},
+		},
+
+		// Get token balance from Metal API
+		"/metal/holder/:email/balance": {
+			GET: async (req) => {
+				try {
+					const { email } = req.params;
+
+					if (!email) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Email is required" }), {
+								status: 400,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
 					if (!METAL_API_PUBLIC_KEY) {
 						throw new Error("METAL_API_PUBLIC_KEY is not set");
 					}
 
+					const url = `${METAL_API_URL_BASE}/holder/${encodeURIComponent(email)}?publicKey=${METAL_API_PUBLIC_KEY}`;
+
 					// Call Metal API to get holder's token balance
-					const response = await fetch(
-						`${METAL_API_URL_BASE}/holder/${address}?publicKey=${METAL_API_PUBLIC_KEY}`,
-						{
-							method: "GET",
-							headers: {
-								"Content-Type": "application/json",
-							},
+					const response = await fetch(url, {
+						method: "GET",
+						headers: {
+							"Content-Type": "application/json",
 						},
-					);
+					});
 
 					if (!response.ok) {
-						throw new Error(`Metal API error: ${response.status}`);
+						throw new Error(`Metal API ${url} error: ${response.status}`);
 					}
 
 					const holderData = (await response.json()) as HolderBalanceResponse;
@@ -276,7 +450,9 @@ serve({
 			GET: () => {
 				try {
 					const users = db
-						.query("SELECT email, wallet_address, created_at FROM users")
+						.query(
+							"SELECT email, wallet_address, ens_name, created_at FROM users",
+						)
 						.all() as User[];
 					return addCorsHeaders(Response.json(users));
 				} catch (error) {
