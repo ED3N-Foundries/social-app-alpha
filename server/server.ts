@@ -458,6 +458,145 @@ serve({
 				}
 			},
 		},
+
+		"/events/:id/update": {
+			PUT: async (req) => {
+				try {
+					const { id } = req.params;
+					const { title, description, date, location, creator_email } =
+						await req.json();
+
+					if (!id) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event ID is required" }), {
+								status: 400,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Get the existing event
+					const existingEvent = db
+						.query("SELECT * FROM events WHERE id = ?")
+						.get(id) as Event | null;
+
+					if (!existingEvent) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Check if the user is the creator of the event
+					if (creator_email !== existingEvent.creator_email) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: "Not authorized to update this event",
+								}),
+								{
+									status: 403,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Update the event
+					db.query(
+						"UPDATE events SET title = ?, description = ?, date = ?, location = ? WHERE id = ?",
+					).run(
+						title || existingEvent.title,
+						description !== undefined ? description : existingEvent.description,
+						date || existingEvent.date,
+						location !== undefined ? location : existingEvent.location,
+						id,
+					);
+
+					// Get the updated event
+					const updatedEvent = db
+						.query("SELECT * FROM events WHERE id = ?")
+						.get(id) as Event;
+
+					return addCorsHeaders(Response.json(updatedEvent));
+				} catch (error) {
+					console.error("Update event error:", error);
+					return addCorsHeaders(
+						new Response(JSON.stringify({ error: "Failed to update event" }), {
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+			},
+		},
+
+		"/events/:id/delete": {
+			DELETE: async (req) => {
+				try {
+					const { id } = req.params;
+					const { creator_email } = await req.json();
+
+					if (!id) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event ID is required" }), {
+								status: 400,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Get the existing event
+					const existingEvent = db
+						.query("SELECT * FROM events WHERE id = ?")
+						.get(id) as Event | null;
+
+					if (!existingEvent) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Check if the user is the creator of the event
+					if (creator_email !== existingEvent.creator_email) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: "Not authorized to delete this event",
+								}),
+								{
+									status: 403,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Delete the event
+					db.query("DELETE FROM events WHERE id = ?").run(id);
+
+					return addCorsHeaders(
+						Response.json({
+							success: true,
+							message: "Event deleted successfully",
+						}),
+					);
+				} catch (error) {
+					console.error("Delete event error:", error);
+					return addCorsHeaders(
+						new Response(JSON.stringify({ error: "Failed to delete event" }), {
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+			},
+		},
 	},
 
 	// Error handler

@@ -16,4 +16,6 @@ export const Routes = {
 	events: () => "/events",
 	event: (id: string) => `/events/${id}`,
 	createEvent: () => "/events/create",
+	updateEvent: (id: string) => `/events/${id}/update`,
+	deleteEvent: (id: string) => `/events/${id}/delete`,
 };

@@ -52,3 +52,63 @@ export async function createEvent(
 		throw error;
 	}
 }
+
+// Update an existing event
+export async function updateEvent(
+	id: number,
+	eventData: Partial<Omit<Event, "id" | "created_at">>,
+	creatorEmail: string,
+): Promise<Event> {
+	try {
+		const response = await fetch(
+			`${SERVER_HOST_URI}${Routes.updateEvent(id.toString())}`,
+			{
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					...eventData,
+					creator_email: creatorEmail,
+				}),
+			},
+		);
+
+		if (!response.ok) {
+			throw new Error(`Failed to update event with id ${id}`);
+		}
+
+		return await response.json();
+	} catch (error) {
+		console.error(`API error updating event ${id}:`, error);
+		throw error;
+	}
+}
+
+// Delete an event
+export async function deleteEvent(
+	id: number,
+	creatorEmail: string,
+): Promise<void> {
+	try {
+		const response = await fetch(
+			`${SERVER_HOST_URI}${Routes.deleteEvent(id.toString())}`,
+			{
+				method: "DELETE",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					creator_email: creatorEmail,
+				}),
+			},
+		);
+
+		if (!response.ok) {
+			throw new Error(`Failed to delete event with id ${id}`);
+		}
+	} catch (error) {
+		console.error(`API error deleting event ${id}:`, error);
+		throw error;
+	}
+}
