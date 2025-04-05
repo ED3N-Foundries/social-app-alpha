@@ -150,11 +150,11 @@ const distributeTestTokens = async () => {
 	} finally {
 		isDistributing.value = false;
 		// Refresh token balance to see updated tokens, we have to set a timeout because the transaction takes too long, so we are faking some loading time on our end.
+		appStore.isLoadingBalance = true;
 		setTimeout(async () => {
-			appStore.isLoadingBalance = true;
 			await appStore.fetchTokenBalance();
 			// No need to set to false here, as fetchTokenBalance automatically does that at the end of its function.
-		}, 6000);
+		}, 9000);
 	}
 };
 

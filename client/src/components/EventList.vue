@@ -141,12 +141,15 @@
                               </v-chip>
                             </v-list-item-subtitle>
 
+                            <!-- Approve/Reject buttons with opposing button disabled -->
                             <template v-slot:append v-if="canEditEvent(event) && attendee.status === 'pending'">
                               <v-btn
                                 icon="mdi-check"
                                 variant="text"
                                 color="success"
                                 size="small"
+                                :loading="loadingApprove[`${event.id}-${attendee.attendee_email}`]"
+                                :disabled="loadingReject[`${event.id}-${attendee.attendee_email}`]"
                                 @click="approveAttendeeHandler(event.id as number, attendee.attendee_email)"
                               ></v-btn>
                               <v-btn
@@ -154,6 +157,8 @@
                                 variant="text"
                                 color="error"
                                 size="small"
+                                :loading="loadingReject[`${event.id}-${attendee.attendee_email}`]"
+                                :disabled="loadingApprove[`${event.id}-${attendee.attendee_email}`]"
                                 @click="rejectAttendeeHandler(event.id as number, attendee.attendee_email)"
                               ></v-btn>
                             </template>
@@ -366,9 +371,9 @@
       </v-card>
     </v-dialog>
 
-    <!-- Join Event Dialog -->
+    <!-- Join Event Dialog with loading state -->
     <v-bottom-sheet v-model="showJoinEventDialog">
-      <v-card>
+      <v-card :loading="joiningEvent">
         <v-card-title>Join Event</v-card-title>
         <v-card-text>
           <p>You are about to join the event <strong>{{ eventToJoin?.title }}</strong>.</p>
@@ -401,6 +406,7 @@
             color="error"
             variant="text"
             @click="showJoinEventDialog = false"
+            :disabled="joiningEvent"
           >
             Cancel
           </v-btn>
@@ -408,7 +414,8 @@
             color="primary"
             variant="text"
             @click="joinEventHandler"
-            :disabled="eventToJoin?.stake_amount &&
+            :loading="joiningEvent"
+            :disabled="!!eventToJoin?.stake_amount &&
               (getApprovedCount(eventToJoin) + getPendingCount(eventToJoin) >= (eventToJoin?.stake_amount || 0))"
           >
             Confirm Join
@@ -499,6 +506,7 @@ const editingEvent = reactive({
 	image_url: "",
 	creator_email: "",
 	stake_amount: 0,
+	attendee_limit: 0,
 });
 
 const newEvent: Omit<
@@ -543,6 +551,11 @@ const showNotification = (message: string, color = "success") => {
 	snackbar.color = color;
 	snackbar.show = true;
 };
+
+// Loading states
+const loadingApprove = ref<Record<string, boolean>>({});
+const loadingReject = ref<Record<string, boolean>>({});
+const joiningEvent = ref(false);
 
 // Fetch events when component is mounted
 onMounted(async () => {
@@ -653,6 +666,7 @@ const startEditingEvent = (event: ExtendedEvent) => {
 	editingEvent.image_url = event.image_url || "";
 	editingEvent.creator_email = event.creator_email;
 	editingEvent.stake_amount = event.stake_amount || 0;
+	editingEvent.attendee_limit = event.attendee_limit || 0;
 };
 
 // Cancel editing
@@ -675,6 +689,7 @@ const updateEventHandler = async () => {
 				location: editingEvent.location,
 				image_url: editingEvent.image_url,
 				stake_amount: editingEvent.stake_amount,
+				attendee_limit: editingEvent.attendee_limit,
 			},
 			appStore.userEmail,
 		);
@@ -741,6 +756,8 @@ const joinEventHandler = async () => {
 		return;
 	}
 
+	joiningEvent.value = true;
+
 	try {
 		await joinEventAPI(eventToJoin.value.id as number, appStore.userEmail);
 
@@ -751,18 +768,21 @@ const joinEventHandler = async () => {
 		await loadEvents();
 
 		// Show success notification
-		showNotification("Successfully joined the event");
+		showNotification("Successfully requested to join the event");
 
 		// Close the dialog
 		showJoinEventDialog.value = false;
 		eventToJoin.value = null;
 	} catch (error: unknown) {
-		let errorMessage = "Failed to join event. Please try again later.";
+		let errorMessage =
+			"Failed to request to join event. Please try again later.";
 		if (error instanceof Error) {
 			errorMessage = error.message;
 		}
-		console.error("Error joining event:", error);
+		console.error("Error requesting to join event:", error);
 		showNotification(errorMessage, "error");
+	} finally {
+		joiningEvent.value = false;
 	}
 };
 
@@ -772,6 +792,9 @@ const approveAttendeeHandler = async (
 	attendeeEmail: string,
 ) => {
 	if (!appStore.userEmail) return;
+
+	const key = `${eventId}-${attendeeEmail}`;
+	loadingApprove.value[key] = true;
 
 	try {
 		await approveAttendeeAPI(eventId, attendeeEmail, appStore.userEmail);
@@ -787,6 +810,8 @@ const approveAttendeeHandler = async (
 	} catch (error) {
 		console.error("Error approving attendee:", error);
 		showNotification("Failed to approve attendee", "error");
+	} finally {
+		loadingApprove.value[key] = false;
 	}
 };
 
@@ -796,6 +821,9 @@ const rejectAttendeeHandler = async (
 	attendeeEmail: string,
 ) => {
 	if (!appStore.userEmail) return;
+
+	const key = `${eventId}-${attendeeEmail}`;
+	loadingReject.value[key] = true;
 
 	try {
 		await rejectAttendeeAPI(eventId, attendeeEmail, appStore.userEmail);
@@ -811,6 +839,8 @@ const rejectAttendeeHandler = async (
 	} catch (error) {
 		console.error("Error rejecting attendee:", error);
 		showNotification("Failed to reject attendee", "error");
+	} finally {
+		loadingReject.value[key] = false;
 	}
 };
 
