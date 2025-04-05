@@ -13,6 +13,8 @@ import { createWalletClient, Hex, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { polygon } from "viem/chains";
 
+// TODO: Need to check balance before spend. Also, should reject request on spend fail.
+
 // ABI for ED3NTicket contract
 const ED3N_TICKET_ABI = [
 	{
