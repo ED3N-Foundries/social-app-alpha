@@ -997,51 +997,6 @@ serve({
 						}
 					}
 
-					// After successfully joining the event, mint NFT ticket
-					if (!MASTER_POLYGON_WALLET_PRIVATE_KEY) {
-						console.error("Missing wallet private key for NFT minting");
-					} else {
-						const account = privateKeyToAccount(
-							MASTER_POLYGON_WALLET_PRIVATE_KEY as Hex,
-						);
-
-						// Create wallet client
-						const client = createWalletClient({
-							account,
-							chain: polygon,
-							transport: http(POLYGON_RPC_URL),
-						});
-
-						// Get user's wallet address
-						const user = db
-							.query("SELECT * FROM users WHERE email = ?")
-							.get(attendee_email) as User;
-
-						if (user && user.wallet_address) {
-							try {
-								// Generate token URI with event data
-								const tokenURI = generateTokenURI(event, attendee_email);
-
-								// Mint NFT
-								const hash = await client.writeContract({
-									address: POLYGON_CONTRACT_ADDRESS,
-									abi: ED3N_TICKET_ABI,
-									functionName: "mintTicket",
-									args: [user.wallet_address, BigInt(id), tokenURI],
-								});
-
-								console.log(`NFT minted for event ${id}, transaction: ${hash}`);
-
-								// Save NFT information in the database
-								db.query(
-									"UPDATE event_attendees SET nft_transaction_hash = ? WHERE event_id = ? AND attendee_email = ?",
-								).run(hash, id, attendee_email);
-							} catch (error) {
-								console.error("NFT minting error:", error);
-							}
-						}
-					}
-
 					return addCorsHeaders(
 						Response.json({
 							success: true,
@@ -1176,12 +1131,49 @@ serve({
 						WHERE id = ?
 					`).run(event.stake_amount, event.stake_amount, id);
 
-					// In the updated flow, tokens have already been spent
-					// when the attendee joined the event, so no further action is needed
-					if (event.stake_amount > 0) {
-						console.log(
-							`Attendance approved for ${attendee_email} in event ${id}. Tokens were already spent when joining.`,
+					// After approving the attendee, mint NFT ticket
+					if (!MASTER_POLYGON_WALLET_PRIVATE_KEY) {
+						console.error("Missing wallet private key for NFT minting");
+					} else {
+						const account = privateKeyToAccount(
+							MASTER_POLYGON_WALLET_PRIVATE_KEY as Hex,
 						);
+
+						// Create wallet client
+						const client = createWalletClient({
+							account,
+							chain: polygon,
+							transport: http(POLYGON_RPC_URL),
+						});
+
+						// Get user's wallet address
+						const user = db
+							.query("SELECT * FROM users WHERE email = ?")
+							.get(attendee_email) as User;
+
+						if (user && user.wallet_address) {
+							try {
+								// Generate token URI with event data
+								const tokenURI = generateTokenURI(event, attendee_email);
+
+								// Mint NFT
+								const hash = await client.writeContract({
+									address: POLYGON_CONTRACT_ADDRESS,
+									abi: ED3N_TICKET_ABI,
+									functionName: "mintTicket",
+									args: [user.wallet_address, BigInt(id), tokenURI],
+								});
+
+								console.log(`NFT minted for event ${id}, transaction: ${hash}`);
+
+								// Save NFT information in the database
+								db.query(
+									"UPDATE event_attendees SET nft_transaction_hash = ? WHERE event_id = ? AND attendee_email = ?",
+								).run(hash, id, attendee_email);
+							} catch (error) {
+								console.error("NFT minting error:", error);
+							}
+						}
 					}
 
 					return addCorsHeaders(
