@@ -12,4 +12,8 @@ export const Routes = {
 		`/metal/holder/${encodeURIComponent(email)}/balance`,
 	ensSetName: () => "/ens/set-name",
 	metalUsers: () => "/metal/users",
+	// Event API routes
+	events: () => "/events",
+	event: (id: string) => `/events/${id}`,
+	createEvent: () => "/events/create",
 };

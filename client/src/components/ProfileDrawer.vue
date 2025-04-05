@@ -26,50 +26,6 @@
     <v-list>
       <v-list-subheader>Wallet Info</v-list-subheader>
 
-      <v-list-item>
-        <v-list-item-title class="text-body-2">ENS Name</v-list-item-title>
-        <div class="d-flex align-center">
-          <template v-if="isEditingEns">
-            <v-text-field
-              v-model="ensNameInput"
-              density="compact"
-              hide-details
-              class="mr-2"
-              :loading="isLoadingEns"
-              :rules="[(v: string) => !!v || 'ENS name is required']"
-            ></v-text-field>
-            <v-btn
-              size="small"
-              color="success"
-              icon="mdi-check"
-              variant="text"
-              @click="saveEns"
-              :disabled="!ensNameInput"
-              :loading="isLoadingEns"
-            ></v-btn>
-            <v-btn
-              size="small"
-              color="error"
-              icon="mdi-close"
-              variant="text"
-              @click="cancelEnsEdit"
-              :disabled="isLoadingEns"
-            ></v-btn>
-          </template>
-          <template v-else>
-            <span v-if="userEnsName" class="mr-2">{{ userEnsName }}</span>
-            <span v-else class="text-grey mr-2">Set ENS name</span>
-            <v-btn
-              size="small"
-              variant="text"
-              icon="mdi-pencil"
-              density="compact"
-              @click="startEnsEdit"
-            ></v-btn>
-          </template>
-        </div>
-      </v-list-item>
-
       <v-divider></v-divider>
 
       <v-list-subheader>Token Balances</v-list-subheader>
@@ -132,7 +88,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, defineProps, defineEmits, watch, onMounted, ref } from "vue";
+import { computed, defineProps, defineEmits, watch, onMounted } from "vue";
 import { useAppStore } from "@/stores/app";
 
 const props = defineProps<{
@@ -142,16 +98,12 @@ const props = defineProps<{
 const emit = defineEmits(["update:modelValue"]);
 
 const appStore = useAppStore();
-const isLoadingEns = ref(false);
-const isEditingEns = ref(false);
-const ensNameInput = ref("");
+const isLoadingBalance = computed(() => appStore.isLoadingBalance);
 
 const userEmail = computed(() => appStore.email);
 const walletAddress = computed(() => appStore.walletAddress);
-const userEnsName = computed(() => appStore.ensName);
 const tokens = computed(() => appStore.tokens);
 const totalValue = computed(() => appStore.totalValue);
-const isLoadingBalance = computed(() => appStore.isLoadingBalance);
 const error = computed(() => appStore.error);
 
 const loadTokenBalance = async () => {
@@ -163,28 +115,6 @@ const loadTokenBalance = async () => {
 
 		// Get token balances
 		await appStore.fetchTokenBalance();
-	}
-};
-
-const startEnsEdit = () => {
-	ensNameInput.value = userEnsName.value || "";
-	isEditingEns.value = true;
-};
-
-const cancelEnsEdit = () => {
-	isEditingEns.value = false;
-	ensNameInput.value = "";
-};
-
-const saveEns = async () => {
-	if (!ensNameInput.value) return;
-
-	isLoadingEns.value = true;
-	try {
-		await appStore.updateEnsName(ensNameInput.value);
-		isEditingEns.value = false;
-	} finally {
-		isLoadingEns.value = false;
 	}
 };
 

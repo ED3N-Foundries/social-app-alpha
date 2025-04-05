@@ -1,15 +1,16 @@
 // Import required Bun modules
 import { serve } from "bun";
 import { Database } from "bun:sqlite";
-import NameStone from "@namestone/namestone-sdk";
 import { SERVER_PORT } from "./consts";
+import { SiweMessage } from "siwe";
+import { createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 // Shared types between client and server
 export interface User {
 	id?: number;
 	email: string;
 	wallet_address: string;
-	ens_name?: string;
 	created_at: string;
 }
 
@@ -20,6 +21,16 @@ export interface TokenBalance {
 	symbol: string;
 	balance: number;
 	value: number;
+}
+
+export interface Event {
+	id?: number;
+	title: string;
+	description: string;
+	date: string;
+	location: string;
+	creator_email: string;
+	created_at: string;
 }
 
 export interface HolderBalanceResponse {
@@ -46,8 +57,20 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
     wallet_address TEXT UNIQUE,
-    ens_name TEXT,
     created_at TEXT NOT NULL
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    date TEXT NOT NULL,
+    location TEXT,
+    creator_email TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (creator_email) REFERENCES users(email)
   )
 `);
 
@@ -55,18 +78,6 @@ db.exec(`
 const METAL_API_PUBLIC_KEY = process.env.METAL_API_PUBLIC_KEY;
 const METAL_API_PRIVATE_KEY = process.env.METAL_API_PRIVATE_KEY;
 const METAL_API_URL_BASE = "https://api.metal.build";
-
-// NameStone API configuration
-const NAMESTONE_API_KEY = process.env.NAMESTONE_API_KEY;
-
-// Initialize NameStone SDK
-const namestone = new NameStone(NAMESTONE_API_KEY);
-
-// Master Polygon Wallet
-const MASTER_POLYGON_WALLET_ADDRESS = process.env.MASTER_POLYGON_WALLET_ADDRESS;
-const MASTER_POLYGON_WALLET_PRIVATE_KEY =
-	process.env.MASTER_POLYGON_WALLET_PRIVATE_KEY;
-const MASTER_POLYGON_RPC_URL_BASE = "https://polygon-rpc.com";
 
 // CORS headers helper function
 function addCorsHeaders(response: Response): Response {
@@ -83,79 +94,6 @@ function addCorsHeaders(response: Response): Response {
 		statusText: response.statusText,
 		headers,
 	});
-}
-
-// Helper function to create or update ENS name
-async function createOrUpdateEnsName(
-	walletAddress: string,
-	ensName: string,
-): Promise<boolean> {
-	try {
-		// Ensure the ENS name ends with .eth
-		const normalizedEnsName = ensName.endsWith(".eth")
-			? ensName
-			: `${ensName}.eth`;
-
-		const nameWithoutDomain = normalizedEnsName.replace(".eth", "");
-
-		// Use NameStone SDK to set name
-		await namestone.setName({
-			address: walletAddress,
-			domain: "eth", // Using the default .eth domain
-			name: nameWithoutDomain, // Remove .eth since the domain is specified separately
-			text_records: {
-				description: "ENS name created via social-app-alpha",
-			},
-		});
-
-		// Update ENS name in the database
-		db.query("UPDATE users SET ens_name = ? WHERE wallet_address = ?").run(
-			normalizedEnsName,
-			walletAddress,
-		);
-
-		return true;
-	} catch (error) {
-		console.error("Error setting ENS name:", error);
-		return false;
-	}
-}
-
-// Helper function to get ENS name for an address
-async function getEnsName(walletAddress: string): Promise<string | null> {
-	try {
-		// First check our database
-		const user = db
-			.query("SELECT ens_name FROM users WHERE wallet_address = ?")
-			.get(walletAddress) as { ens_name: string } | null;
-
-		if (user?.ens_name) {
-			return user.ens_name;
-		}
-
-		// If not found in database, check NameStone API using the SDK
-		const namesData = await namestone.getNames({
-			address: walletAddress,
-			domain: "eth",
-		});
-
-		if (namesData.length > 0) {
-			const ensName = `${namesData[0].name}.eth`;
-
-			// Update our database with the ENS name
-			db.query("UPDATE users SET ens_name = ? WHERE wallet_address = ?").run(
-				ensName,
-				walletAddress,
-			);
-
-			return ensName;
-		}
-
-		return null;
-	} catch (error) {
-		console.error("Error getting ENS name:", error);
-		return null;
-	}
 }
 
 // Start the server
@@ -213,7 +151,6 @@ serve({
 								success: true,
 								email: existingUser.email,
 								wallet_address: existingUser.wallet_address,
-								ens_name: existingUser.ens_name,
 								created_at: existingUser.created_at,
 							}),
 						);
@@ -259,14 +196,11 @@ serve({
 						throw error;
 					}
 
-					const ensName = await getEnsName(user.wallet_address);
-
 					return addCorsHeaders(
 						Response.json({
 							success: true,
 							email: user.email,
 							wallet_address: user.wallet_address,
-							ens_name: ensName,
 						}),
 					);
 				} catch (error) {
@@ -312,14 +246,10 @@ serve({
 						);
 					}
 
-					// Get ENS name using the wallet address
-					const ensName = await getEnsName(user.wallet_address);
-
 					return addCorsHeaders(
 						Response.json({
 							email: user.email,
 							wallet_address: user.wallet_address,
-							ens_name: ensName,
 							created_at: user.created_at,
 						}),
 					);
@@ -330,75 +260,6 @@ serve({
 							JSON.stringify({ error: "Failed to retrieve user data" }),
 							{ status: 500, headers: { "Content-Type": "application/json" } },
 						),
-					);
-				}
-			},
-		},
-
-		// Set/Update ENS name for a user
-		"/ens/set-name": {
-			POST: async (req) => {
-				try {
-					const { wallet_address, ens_name } = await req.json();
-
-					if (!wallet_address || !ens_name) {
-						return addCorsHeaders(
-							new Response(
-								JSON.stringify({
-									error: "Wallet address and ENS name are required",
-								}),
-								{
-									status: 400,
-									headers: { "Content-Type": "application/json" },
-								},
-							),
-						);
-					}
-
-					// Check if the user exists
-					const user = db
-						.query("SELECT * FROM users WHERE wallet_address = ?")
-						.get(wallet_address) as User | null;
-
-					if (!user) {
-						return addCorsHeaders(
-							new Response(JSON.stringify({ error: "User not found" }), {
-								status: 404,
-								headers: { "Content-Type": "application/json" },
-							}),
-						);
-					}
-
-					const success = await createOrUpdateEnsName(wallet_address, ens_name);
-
-					if (!success) {
-						return addCorsHeaders(
-							new Response(
-								JSON.stringify({ error: "Failed to set ENS name" }),
-								{
-									status: 500,
-									headers: { "Content-Type": "application/json" },
-								},
-							),
-						);
-					}
-
-					return addCorsHeaders(
-						Response.json({
-							success: true,
-							wallet_address,
-							ens_name: ens_name.endsWith(".eth")
-								? ens_name
-								: `${ens_name}.eth`,
-						}),
-					);
-				} catch (error) {
-					console.error("Set ENS name error:", error);
-					return addCorsHeaders(
-						new Response(JSON.stringify({ error: "Failed to set ENS name" }), {
-							status: 500,
-							headers: { "Content-Type": "application/json" },
-						}),
 					);
 				}
 			},
@@ -457,9 +318,7 @@ serve({
 			GET: () => {
 				try {
 					const users = db
-						.query(
-							"SELECT email, wallet_address, ens_name, created_at FROM users",
-						)
+						.query("SELECT email, wallet_address, created_at FROM users")
 						.all() as User[];
 					return addCorsHeaders(Response.json(users));
 				} catch (error) {
@@ -469,6 +328,132 @@ serve({
 							status: 500,
 							headers: { "Content-Type": "application/json" },
 						}),
+					);
+				}
+			},
+		},
+
+		// Event API endpoints
+		"/events": {
+			GET: () => {
+				try {
+					const events = db
+						.query("SELECT * FROM events ORDER BY date DESC")
+						.all() as Event[];
+					return addCorsHeaders(Response.json(events));
+				} catch (error) {
+					console.error("List events error:", error);
+					return addCorsHeaders(
+						new Response(JSON.stringify({ error: "Failed to list events" }), {
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+			},
+		},
+
+		"/events/create": {
+			POST: async (req) => {
+				try {
+					const { title, description, date, location, creator_email } =
+						await req.json();
+
+					if (!title || !date || !creator_email) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: "Title, date, and creator_email are required",
+								}),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Verify the creator exists
+					const creator = db
+						.query("SELECT * FROM users WHERE email = ?")
+						.get(creator_email) as User | null;
+
+					if (!creator) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Creator not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					// Insert the new event
+					const result = db
+						.query(
+							"INSERT INTO events (title, description, date, location, creator_email, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+						)
+						.run(
+							title,
+							description || "",
+							date,
+							location || "",
+							creator_email,
+							new Date().toISOString(),
+						);
+
+					// Get the newly created event
+					const newEvent = db
+						.query("SELECT * FROM events WHERE id = ?")
+						.get(result.lastInsertRowid) as Event;
+
+					return addCorsHeaders(Response.json(newEvent));
+				} catch (error) {
+					console.error("Create event error:", error);
+					return addCorsHeaders(
+						new Response(JSON.stringify({ error: "Failed to create event" }), {
+							status: 500,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+			},
+		},
+
+		"/events/:id": {
+			GET: (req) => {
+				try {
+					const { id } = req.params;
+
+					if (!id) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event ID is required" }), {
+								status: 400,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					const event = db
+						.query("SELECT * FROM events WHERE id = ?")
+						.get(id) as Event | null;
+
+					if (!event) {
+						return addCorsHeaders(
+							new Response(JSON.stringify({ error: "Event not found" }), {
+								status: 404,
+								headers: { "Content-Type": "application/json" },
+							}),
+						);
+					}
+
+					return addCorsHeaders(Response.json(event));
+				} catch (error) {
+					console.error("Get event error:", error);
+					return addCorsHeaders(
+						new Response(
+							JSON.stringify({ error: "Failed to retrieve event" }),
+							{ status: 500, headers: { "Content-Type": "application/json" } },
+						),
 					);
 				}
 			},
