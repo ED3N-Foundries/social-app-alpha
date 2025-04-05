@@ -1,0 +1,11 @@
+# SQLite
+app.db
+
+# Environment variables
+.env
+
+# Bun
+.bun
+
+# Node
+node_modules

@@ -1,0 +1,15 @@
+{
+  "name": "social-app-server",
+  "version": "1.0.0",
+  "type": "module",
+  "devDependencies": {
+    "bun-types": "^1.2.8"
+  },
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "bun --hot run server.ts"
+  },
+  "module": "server.ts",
+  "dependencies": {},
+  "types": "bun-types"
+}
