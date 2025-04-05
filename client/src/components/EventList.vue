@@ -328,6 +328,15 @@
 
             <v-text-field
               v-model.number="newEvent.stake_amount"
+              label="Stake Amount"
+              type="number"
+              min="0"
+              :rules="[(v: number) => v >= 0 || 'Limit must be a positive number']"
+              hint="Amount of $ED3N tokens required to attend this event"
+            ></v-text-field>
+
+            <v-text-field
+              v-model.number="newEvent.attendee_limit"
               label="Attendee Limit"
               type="number"
               min="0"
@@ -492,13 +501,25 @@ const editingEvent = reactive({
 	stake_amount: 0,
 });
 
-const newEvent = reactive({
+const newEvent: Omit<
+	Event,
+	| "id"
+	| "created_at"
+	| "creator_email"
+	| "pending_attendees"
+	| "approved_attendees"
+	| "rejected_attendees"
+	| "total_staked"
+	| "pending_stake"
+> = reactive({
 	title: "Party Time!",
 	description: "Come join us for a night of fun and games!",
 	date: "2025-05-01T19:00:00",
 	location: "123 Main St, Anytown, USA",
-	image_url: "https://via.placeholder.com/150",
+	image_url:
+		"https://kagi.com/proxy/taipei-101_standard.jpg?c=dhSWYzhKlbCyN8IwKbfpVXp1irNiELvRzmwJSykQI0enLywDINy_LvCz2weAwNpe29XDqjGS6tNZfayCorSiOHu3T-EAadZS3ivuka2l2p-NAksnIrjmGS0Vol6Nomj9DiDAUfcxXKvPL3F_enQ_r7Ph18j_YY4RpRXyJ2_oGH4%3D",
 	stake_amount: 20,
+	attendee_limit: 10,
 });
 
 const showDeleteDialog = ref(false);

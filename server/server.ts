@@ -1,13 +1,7 @@
 // Import required Bun modules
 import { serve } from "bun";
 import { Database } from "bun:sqlite";
-import {
-	SERVER_PORT,
-	SERVER_WALLET_EMAIL,
-	ED3N_TOKEN_SYMBOL,
-	ED3N_TOKEN_ADDRESS,
-	ED3N_INITIAL_GRANT,
-} from "./consts";
+import { SERVER_PORT, ED3N_TOKEN_SYMBOL, ED3N_TOKEN_ADDRESS } from "./consts";
 import { SiweMessage } from "siwe";
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -41,6 +35,7 @@ export interface Event {
 	pending_attendees: number;
 	approved_attendees: number;
 	rejected_attendees: number;
+	attendee_limit: number;
 	stake_amount: number; // Represents attendee limit
 	total_staked: number; // Represents approved attendees count
 	pending_stake: number; // Represents pending attendees count
@@ -96,6 +91,7 @@ db.exec(`
     stake_amount REAL DEFAULT 0,
     total_staked REAL DEFAULT 0,
     pending_stake REAL DEFAULT 0,
+    attendee_limit INTEGER DEFAULT 0,
     FOREIGN KEY (creator_email) REFERENCES users(email)
   )
 `);
@@ -136,72 +132,15 @@ function addCorsHeaders(response: Response): Response {
 	});
 }
 
-// Helper function to ensure system wallet exists
-async function ensureSystemWallet() {
+// Helper function to spend tokens from user's account
+async function spendTokens(userEmail: string, amount: number) {
 	if (!METAL_API_PRIVATE_KEY) {
 		throw new Error("METAL_API_PRIVATE_KEY is not set");
 	}
 
 	try {
-		// First check if system wallet already exists
-		const user = db
-			.query("SELECT * FROM users WHERE email = ?")
-			.get(SERVER_WALLET_EMAIL) as User | null;
-
-		if (user) {
-			return user.wallet_address;
-		}
-
-		// Create a new holder with Metal API for the system wallet
 		const response = await fetch(
-			`${METAL_API_URL_BASE}/holder/${encodeURIComponent(SERVER_WALLET_EMAIL)}?privateKey=${METAL_API_PRIVATE_KEY}`,
-			{
-				method: "PUT",
-				headers: {
-					"Content-Type": "application/json",
-					"x-api-key": METAL_API_PRIVATE_KEY,
-				},
-			},
-		);
-
-		if (!response.ok) {
-			throw new Error(`Metal API error: ${response.status}`);
-		}
-
-		const holder = (await response.json()) as MetalHolderResponse;
-
-		// Save the system wallet address in the database
-		db.query(
-			"INSERT INTO users (email, wallet_address, created_at) VALUES (?, ?, ?)",
-		).run(SERVER_WALLET_EMAIL, holder.address, new Date().toISOString());
-
-		console.log(`System wallet created with address: ${holder.address}`);
-		return holder.address;
-	} catch (error) {
-		console.error("Error ensuring system wallet:", error);
-		throw error;
-	}
-}
-
-// Helper function to distribute initial token grant to new users
-async function distributeInitialTokens(userEmail: string) {
-	if (!METAL_API_PRIVATE_KEY) {
-		throw new Error("METAL_API_PRIVATE_KEY is not set");
-	}
-
-	try {
-		// Get user wallet address
-		const user = db
-			.query("SELECT * FROM users WHERE email = ?")
-			.get(userEmail) as User | null;
-
-		if (!user || !user.wallet_address) {
-			throw new Error("User wallet address not found");
-		}
-
-		// Use the distribute endpoint directly
-		const response = await fetch(
-			`${METAL_API_URL_BASE}/token/${ED3N_TOKEN_ADDRESS}/distribute`,
+			`${METAL_API_URL_BASE}/holder/${encodeURIComponent(userEmail)}/spend`,
 			{
 				method: "POST",
 				headers: {
@@ -209,58 +148,8 @@ async function distributeInitialTokens(userEmail: string) {
 					"x-api-key": METAL_API_PRIVATE_KEY,
 				},
 				body: JSON.stringify({
-					sendTo: user.wallet_address,
-					amount: ED3N_INITIAL_GRANT,
-				}),
-			},
-		);
-
-		if (!response.ok) {
-			throw new Error(`Metal API error: ${response.status}`);
-		}
-
-		const distributionResult = await response.json();
-
-		console.log(
-			`Distributed ${ED3N_INITIAL_GRANT} ${ED3N_TOKEN_SYMBOL} to new user ${userEmail}:`,
-			distributionResult,
-		);
-		return distributionResult;
-	} catch (error) {
-		console.error(
-			`Failed to distribute initial ${ED3N_TOKEN_SYMBOL} tokens to ${userEmail}:`,
-			error,
-		);
-		throw error;
-	}
-}
-
-// Helper function for Metal API token transfers
-async function transferTokens(
-	fromEmail: string,
-	toEmail: string,
-	amount: number,
-	reference: string,
-) {
-	if (!METAL_API_PRIVATE_KEY) {
-		throw new Error("METAL_API_PRIVATE_KEY is not set");
-	}
-
-	try {
-		const response = await fetch(
-			`${METAL_API_URL_BASE}/tokens/transfer?privateKey=${METAL_API_PRIVATE_KEY}`,
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"x-api-key": METAL_API_PRIVATE_KEY,
-				},
-				body: JSON.stringify({
-					fromHolderId: fromEmail,
-					toHolderId: toEmail,
 					tokenAddress: ED3N_TOKEN_ADDRESS,
-					amount: amount.toString(),
-					reference: reference,
+					amount: amount,
 				}),
 			},
 		);
@@ -271,7 +160,7 @@ async function transferTokens(
 
 		return await response.json();
 	} catch (error) {
-		console.error("Error transferring tokens:", error);
+		console.error("Error spending tokens:", error);
 		throw error;
 	}
 }
@@ -280,14 +169,6 @@ async function transferTokens(
 serve({
 	port: SERVER_PORT,
 	async fetch(req, server) {
-		// Ensure system wallet exists when server starts
-		try {
-			await ensureSystemWallet();
-			console.log("System wallet is ready");
-		} catch (error) {
-			console.error("Failed to initialize system wallet:", error);
-		}
-
 		// Handle CORS preflight requests
 		if (req.method === "OPTIONS") {
 			return new Response(null, {
@@ -378,15 +259,6 @@ serve({
 							wallet_address: holder.address,
 							created_at: new Date().toISOString(),
 						};
-
-						// Distribute initial tokens to the new user - After user is created and saved
-						try {
-							await distributeInitialTokens(email);
-						} catch (tokenError) {
-							console.error("Error distributing initial tokens:", tokenError);
-							// We'll still return success even if token distribution fails
-							// The user account is created, but they might not have received tokens
-						}
 					} catch (error) {
 						console.error("Error creating wallet:", error);
 						throw error;
@@ -397,7 +269,6 @@ serve({
 							success: true,
 							email: user.email,
 							wallet_address: user.wallet_address,
-							initial_grant: ED3N_INITIAL_GRANT,
 							token_symbol: ED3N_TOKEN_SYMBOL,
 						}),
 					);
@@ -415,7 +286,7 @@ serve({
 
 		// Get user wallet information
 		"/metal/user/:email": {
-			GET: async (req) => {
+			GET: async (req: { params: { email?: string } }) => {
 				try {
 					const { email } = req.params;
 
@@ -436,19 +307,81 @@ serve({
 						.get(email) as User | null;
 
 					if (!user) {
-						return addCorsHeaders(
-							new Response(JSON.stringify({ error: "User not found" }), {
-								status: 404,
-								headers: { "Content-Type": "application/json" },
-							}),
-						);
+						// User not found locally, check if they exist in Metal
+						if (!METAL_API_PRIVATE_KEY || !METAL_API_PUBLIC_KEY) {
+							throw new Error(
+								"METAL_API_PRIVATE_KEY or METAL_API_PUBLIC_KEY is not set",
+							);
+						}
+
+						try {
+							// Check if user exists in Metal platform
+							const response = await fetch(
+								`${METAL_API_URL_BASE}/holder/${encodeURIComponent(email)}?privateKey=${METAL_API_PRIVATE_KEY}`,
+								{
+									method: "GET",
+									headers: {
+										"Content-Type": "application/json",
+										"x-api-key": METAL_API_PRIVATE_KEY,
+									},
+								},
+							);
+
+							// If user doesn't exist in Metal, return 404
+							if (!response.ok) {
+								return addCorsHeaders(
+									new Response(
+										JSON.stringify({
+											error: "User not found in Metal platform",
+										}),
+										{
+											status: 404,
+											headers: { "Content-Type": "application/json" },
+										},
+									),
+								);
+							}
+
+							const holder = (await response.json()) as MetalHolderResponse;
+
+							// Create user locally with wallet address from Metal
+							db.query(
+								"INSERT INTO users (email, wallet_address, created_at) VALUES (?, ?, ?)",
+							).run(email, holder.address, new Date().toISOString());
+
+							const newUser = {
+								email,
+								wallet_address: holder.address,
+								created_at: new Date().toISOString(),
+							};
+
+							return addCorsHeaders(
+								Response.json({
+									...newUser,
+									message: "Account recovered and initial tokens granted",
+								}),
+							);
+						} catch (error) {
+							console.error("Error recovering user from Metal:", error);
+							return addCorsHeaders(
+								new Response(
+									JSON.stringify({
+										error: "User not found and recovery failed",
+									}),
+									{
+										status: 404,
+										headers: { "Content-Type": "application/json" },
+									},
+								),
+							);
+						}
 					}
 
 					return addCorsHeaders(
 						Response.json({
-							email: user.email,
-							wallet_address: user.wallet_address,
-							created_at: user.created_at,
+							email: user?.email,
+							wallet_address: user?.wallet_address,
+							created_at: user?.created_at,
 						}),
 					);
 				} catch (error) {
@@ -936,29 +869,22 @@ serve({
 						"UPDATE events SET pending_stake = pending_stake + 1 WHERE id = ?",
 					).run(id);
 
-					// Implement Metal API token staking
-					// Transfer tokens from the attendee to the system wallet (not to the event creator)
+					// Implement Metal API token spending
 					if (event.stake_amount > 0) {
 						try {
-							// Ensure system wallet exists
-							await ensureSystemWallet();
-
-							// Transfer tokens from attendee to system wallet (escrow)
-							// Note: We stake a fixed 1 ED3N token regardless of event.stake_amount
-							// event.stake_amount is used only as attendee limit
-							const stakeResult = await transferTokens(
+							// Spend tokens from attendee account using Metal API spend endpoint
+							// Note: The tokens are automatically returned to the merchant account
+							const spendResult = await spendTokens(
 								attendee_email,
-								SERVER_WALLET_EMAIL, // Using system wallet as escrow
-								event.stake_amount, // Amount to stake
-								`Stake for event ${id}`,
+								event.stake_amount,
 							);
 
 							console.log(
-								`${ED3N_TOKEN_SYMBOL} staking completed:`,
-								stakeResult,
+								`${ED3N_TOKEN_SYMBOL} spending completed:`,
+								spendResult,
 							);
 						} catch (error) {
-							console.error(`${ED3N_TOKEN_SYMBOL} staking failed:`, error);
+							console.error(`${ED3N_TOKEN_SYMBOL} spending failed:`, error);
 							// We will still allow the user to join but log the error
 							// In a production system, you might want to roll back the join if the staking fails
 						}
@@ -1098,19 +1024,12 @@ serve({
 						WHERE id = ?
 					`).run(event.stake_amount, event.stake_amount, id);
 
-					// In the updated flow, we're not transferring tokens from the system wallet
-					// when approving - we keep them there until the event is completed
-					// or the attendee is rejected
+					// In the updated flow, tokens have already been spent
+					// when the attendee joined the event, so no further action is needed
 					if (event.stake_amount > 0) {
-						try {
-							// Just log the approval, tokens remain in system wallet
-							// Note: The fixed 1 ED3N token that was staked remains in the system wallet
-							console.log(
-								`Stake confirmed for attendee ${attendee_email} in event ${id}. Tokens remain in system wallet.`,
-							);
-						} catch (error) {
-							console.error("Stake confirmation failed:", error);
-						}
+						console.log(
+							`Attendance approved for ${attendee_email} in event ${id}. Tokens were already spent when joining.`,
+						);
 					}
 
 					return addCorsHeaders(
@@ -1207,22 +1126,39 @@ serve({
 						"UPDATE events SET pending_stake = pending_stake - 1 WHERE id = ?",
 					).run(id);
 
-					// Implement Metal API refund
-					// When rejecting, we return tokens from system wallet to the attendee
+					// Refund tokens by distributing tokens back to the attendee
 					if (event.stake_amount > 0) {
 						try {
-							// Ensure system wallet exists
-							await ensureSystemWallet();
+							// Get the attendee's wallet address
+							const attendeeInfo = db
+								.query("SELECT wallet_address FROM users WHERE email = ?")
+								.get(attendee_email) as { wallet_address: string } | null;
 
-							// Refund the stakes from system wallet back to the attendee
-							// Note: We refund the fixed 1 ED3N token that was staked
-							const refundResult = await transferTokens(
-								SERVER_WALLET_EMAIL, // From system wallet
-								attendee_email, // To the attendee
-								event.stake_amount, // Amount to refund
-								`Refund for event ${id}`,
+							if (!attendeeInfo) {
+								throw new Error("Attendee wallet address not found");
+							}
+
+							// Distribute tokens back to the attendee
+							const response = await fetch(
+								`${METAL_API_URL_BASE}/token/${ED3N_TOKEN_ADDRESS}/distribute`,
+								{
+									method: "POST",
+									headers: {
+										"Content-Type": "application/json",
+										"x-api-key": METAL_API_PRIVATE_KEY || "",
+									},
+									body: JSON.stringify({
+										sendTo: attendeeInfo.wallet_address,
+										amount: event.stake_amount,
+									}),
+								},
 							);
 
+							if (!response.ok) {
+								throw new Error(`Metal API error: ${response.status}`);
+							}
+
+							const refundResult = await response.json();
 							console.log(
 								`${ED3N_TOKEN_SYMBOL} refund completed:`,
 								refundResult,
@@ -1250,6 +1186,113 @@ serve({
 				}
 			},
 		},
+
+		// Test token distribution endpoint
+		"/metal/distribute-tokens": {
+			POST: async (req) => {
+				try {
+					const { email, amount } = await req.json();
+
+					if (!email || !amount) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: "Email and amount are required",
+								}),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Get user wallet address
+					const user = db
+						.query("SELECT * FROM users WHERE email = ?")
+						.get(email) as User | null;
+
+					if (!user || !user.wallet_address) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({ error: "User wallet address not found" }),
+								{
+									status: 404,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					if (!METAL_API_PRIVATE_KEY) {
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({ error: "Metal API key not configured" }),
+								{
+									status: 500,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					// Use Metal API to distribute tokens
+					const response = await fetch(
+						`${METAL_API_URL_BASE}/token/${ED3N_TOKEN_ADDRESS}/distribute`,
+						{
+							method: "POST",
+							headers: {
+								"Content-Type": "application/json",
+								"x-api-key": METAL_API_PRIVATE_KEY,
+							},
+							body: JSON.stringify({
+								sendToAddress: user.wallet_address,
+								amount: amount,
+							}),
+						},
+					);
+
+					if (!response.ok) {
+						const errorText = await response.text();
+						console.error("Metal API error:", errorText);
+						return addCorsHeaders(
+							new Response(
+								JSON.stringify({
+									error: `Distribution failed: ${response.status} ${errorText}`,
+								}),
+								{
+									status: response.status,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
+						);
+					}
+
+					const distributionResult = await response.json();
+
+					console.log(
+						`Distributed ${amount} ${ED3N_TOKEN_SYMBOL} to user ${email}:`,
+						distributionResult,
+					);
+
+					return addCorsHeaders(
+						Response.json({
+							success: true,
+							message: `Successfully distributed ${amount} ${ED3N_TOKEN_SYMBOL} tokens`,
+							details: distributionResult,
+						}),
+					);
+				} catch (error) {
+					console.error("Distribute tokens error:", error);
+					return addCorsHeaders(
+						new Response(
+							JSON.stringify({ error: "Failed to distribute tokens" }),
+							{ status: 500, headers: { "Content-Type": "application/json" } },
+						),
+					);
+				}
+			},
+		},
 	},
 
 	// Error handler
@@ -1260,5 +1303,94 @@ serve({
 		);
 	},
 });
+
+// Verify token and grant configurations at startup
+async function verifyTokenConfig() {
+	console.log("Verifying token and grant configuration...");
+
+	// Check if environment variables are set
+	if (!METAL_API_PRIVATE_KEY) {
+		console.error(
+			"ERROR: Metal API keys are not set. Token operations will fail.",
+		);
+		console.error("Set METAL_API_PRIVATE_KEY environment variable.");
+		return;
+	}
+
+	console.log("ED3N Token Configuration:");
+	console.log(`- Token Symbol: ${ED3N_TOKEN_SYMBOL}`);
+
+	try {
+		// Fetch all tokens to find the one with the correct symbol
+		const allTokensResponse = await fetch(
+			`${METAL_API_URL_BASE}/merchant/all-tokens`,
+			{
+				method: "GET",
+				headers: {
+					"Content-Type": "application/json",
+					"x-api-key": METAL_API_PRIVATE_KEY,
+				},
+			},
+		);
+
+		if (!allTokensResponse.ok) {
+			console.error(
+				`ERROR: Failed to fetch tokens - HTTP ${allTokensResponse.status}`,
+			);
+			console.error("Cannot verify token configuration without token list.");
+			return;
+		}
+
+		const tokensData = await allTokensResponse.json();
+
+		// Log the structure to debug
+		console.log("Token data structure:", JSON.stringify(tokensData));
+
+		// Check if tokensData is an object with a tokens property
+		const tokensArray = Array.isArray(tokensData)
+			? tokensData
+			: tokensData.tokens
+				? tokensData.tokens
+				: tokensData.data
+					? tokensData.data
+					: null;
+
+		if (!tokensArray || !Array.isArray(tokensArray)) {
+			console.error(
+				"ERROR: Unexpected API response format. Cannot find tokens array.",
+			);
+			console.error("Response structure:", typeof tokensData);
+			return;
+		}
+
+		// Find the token with the matching address
+		const ed3nToken = tokensArray.find(
+			(token) =>
+				token.address &&
+				token.address.toLowerCase() === ED3N_TOKEN_ADDRESS.toLowerCase(),
+		);
+
+		if (!ed3nToken) {
+			console.error(`ERROR: No token found with address ${ED3N_TOKEN_ADDRESS}`);
+			console.error("Please verify the token address in consts.ts");
+			return;
+		}
+
+		console.log(`- Token Found: ${ed3nToken.name} (${ed3nToken.symbol})`);
+		console.log(`- Token Address: ${ed3nToken.address}`);
+
+		// Show token supply information
+		console.log(`- Total Supply: ${ed3nToken.totalSupply}`);
+		console.log(`- Remaining App Supply: ${ed3nToken.remainingAppSupply}`);
+		console.log(`- Merchant Supply: ${ed3nToken.merchantSupply}`);
+
+		console.log("Token configuration verification complete.");
+	} catch (error) {
+		console.error("Error verifying token configuration:", error);
+	}
+}
+
+// Run the verification
+verifyTokenConfig();
 
 console.log("Server running at http://localhost:3000");

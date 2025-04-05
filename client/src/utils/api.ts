@@ -35,7 +35,13 @@ export async function fetchEvent(
 export async function createEvent(
 	eventData: Omit<
 		Event,
-		"id" | "created_at" | "total_staked" | "pending_stake"
+		| "id"
+		| "created_at"
+		| "total_staked"
+		| "pending_stake"
+		| "pending_attendees"
+		| "approved_attendees"
+		| "rejected_attendees"
 	>,
 ): Promise<Event> {
 	try {

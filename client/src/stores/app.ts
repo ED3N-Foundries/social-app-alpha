@@ -122,6 +122,42 @@ export const useAppStore = defineStore("app", () => {
 		}
 	}
 
+	async function distributeTokens(amount: number) {
+		if (!email.value)
+			return { success: false, error: "No user email available" };
+
+		error.value = "";
+
+		try {
+			const response = await fetch(
+				`${SERVER_HOST_URI}${Routes.distributeTokens()}`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({
+						email: email.value,
+						amount: amount,
+					}),
+				},
+			);
+
+			const data = await response.json();
+
+			if (!response.ok) {
+				error.value = data.error || "Failed to distribute tokens";
+				return { success: false, error: error.value };
+			}
+
+			return { success: true, data };
+		} catch (err) {
+			console.error("Error distributing tokens:", err);
+			error.value = "Failed to distribute tokens";
+			return { success: false, error: error.value };
+		}
+	}
+
 	return {
 		// App state
 		appName,
@@ -151,5 +187,6 @@ export const useAppStore = defineStore("app", () => {
 		fetchUserWallet,
 		fetchTokenBalance,
 		updateEnsName,
+		distributeTokens,
 	};
 });

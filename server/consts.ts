@@ -1,13 +1,11 @@
 export const SERVER_PORT = 3000;
 export const SERVER_HOST_URI = `http://localhost:${SERVER_PORT}`;
-export const SERVER_WALLET_EMAIL = "REDACTED@gmail.com";
 export const CLIENT_PREVIEW_PORT = 5173;
 export const CLIENT_DEV_PORT = 5174;
 
 // Token configuration
 export const ED3N_TOKEN_SYMBOL = "ED3N";
-export const ED3N_TOKEN_ADDRESS = process.env.ED3N_TOKEN_ADDRESS || "0xED3N";
-export const ED3N_INITIAL_GRANT = 1000; // Amount of ED3N tokens to grant new users
+export const ED3N_TOKEN_ADDRESS = "0x36bb8e8d361b0e487869270fbfea6924498a4bc3";
 
 // Route constructors for client use
 export const Routes = {
@@ -16,6 +14,7 @@ export const Routes = {
 	metalUser: (email: string) => `/metal/user/${encodeURIComponent(email)}`,
 	metalHolderBalance: (email: string) =>
 		`/metal/holder/${encodeURIComponent(email)}/balance`,
+	distributeTokens: () => "/metal/distribute-tokens",
 	ensSetName: () => "/ens/set-name",
 	metalUsers: () => "/metal/users",
 	// Event API routes

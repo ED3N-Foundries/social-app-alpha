@@ -67,6 +67,20 @@
       <v-list-item v-if="error" class="text-error">
         <v-list-item-title>{{ error }}</v-list-item-title>
       </v-list-item>
+
+      <v-divider class="my-2"></v-divider>
+
+      <v-list-item>
+        <v-btn
+          color="primary"
+          block
+          :loading="isDistributing"
+          :disabled="isDistributing || isLoadingBalance"
+          @click="distributeTestTokens"
+        >
+          Get Test Tokens (100)
+        </v-btn>
+      </v-list-item>
     </v-list>
 
     <template v-slot:append>
@@ -84,7 +98,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, defineProps, defineEmits, watch, onMounted } from "vue";
+import { computed, defineProps, defineEmits, watch, onMounted, ref } from "vue";
 import { useAppStore } from "@/stores/app";
 
 const props = defineProps<{
@@ -95,6 +109,7 @@ const emit = defineEmits(["update:modelValue"]);
 
 const appStore = useAppStore();
 const isLoadingBalance = computed(() => appStore.isLoadingBalance);
+const isDistributing = ref(false);
 
 const userEmail = computed(() => appStore.email);
 const walletAddress = computed(() => appStore.walletAddress);
@@ -121,6 +136,27 @@ onMounted(() => {
 		appStore.fetchUserWallet(userEmail.value);
 	}
 });
+
+const distributeTestTokens = async () => {
+	isDistributing.value = true;
+	try {
+		const result = await appStore.distributeTokens(100);
+		if (result.success) {
+			// Show success message if needed
+			console.log("Tokens distributed successfully:", result.data);
+		}
+	} catch (err) {
+		console.error("Error distributing tokens:", err);
+	} finally {
+		isDistributing.value = false;
+		// Refresh token balance to see updated tokens, we have to set a timeout because the transaction takes too long, so we are faking some loading time on our end.
+		setTimeout(async () => {
+			appStore.isLoadingBalance = true;
+			await appStore.fetchTokenBalance();
+			// No need to set to false here, as fetchTokenBalance automatically does that at the end of its function.
+		}, 6000);
+	}
+};
 
 const logout = () => {
 	appStore.logout();
