@@ -48,7 +48,7 @@
 <script lang="ts" setup>
 import { ref } from "vue";
 import { useAppStore } from "@/stores/app";
-import { SERVER_HOST_URI } from "../../../types";
+import { Routes, SERVER_HOST_URI } from "../../../server/consts";
 
 const appStore = useAppStore();
 const email = ref("");
@@ -70,7 +70,7 @@ const handleEmailAuth = async () => {
 	isLoading.value = true;
 	try {
 		// Call the API to login/register the user
-		const response = await fetch(`${SERVER_HOST_URI}/metal/login`, {
+		const response = await fetch(`${SERVER_HOST_URI}${Routes.metalLogin()}`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",

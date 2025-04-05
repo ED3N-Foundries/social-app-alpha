@@ -1,13 +1,41 @@
 // Import required Bun modules
 import { serve } from "bun";
 import { Database } from "bun:sqlite";
-import {
-	type User,
-	type MetalHolderResponse,
-	type TokenBalance,
-	type HolderBalanceResponse,
-	SERVER_PORT,
-} from "../types";
+import NameStone from "@namestone/namestone-sdk";
+import { SERVER_PORT } from "./consts";
+
+// Shared types between client and server
+export interface User {
+	id?: number;
+	email: string;
+	wallet_address: string;
+	ens_name?: string;
+	created_at: string;
+}
+
+export interface TokenBalance {
+	id: string;
+	address: string;
+	name: string;
+	symbol: string;
+	balance: number;
+	value: number;
+}
+
+export interface HolderBalanceResponse {
+	id: string;
+	address: string;
+	totalValue: number;
+	tokens: TokenBalance[];
+}
+
+export interface MetalHolderResponse {
+	address: string;
+	id?: string;
+	userId?: string;
+	createdAt?: string;
+	updatedAt?: string;
+}
 
 // Initialize SQLite database
 const db = new Database("app.db");
@@ -30,7 +58,9 @@ const METAL_API_URL_BASE = "https://api.metal.build";
 
 // NameStone API configuration
 const NAMESTONE_API_KEY = process.env.NAMESTONE_API_KEY;
-const NAMESTONE_API_URL_BASE = "https://namestone.com/api/public_v1/";
+
+// Initialize NameStone SDK
+const namestone = new NameStone(NAMESTONE_API_KEY);
 
 // Master Polygon Wallet
 const MASTER_POLYGON_WALLET_ADDRESS = process.env.MASTER_POLYGON_WALLET_ADDRESS;
@@ -60,38 +90,23 @@ async function createOrUpdateEnsName(
 	walletAddress: string,
 	ensName: string,
 ): Promise<boolean> {
-	if (!NAMESTONE_API_KEY) {
-		throw new Error("NAMESTONE_API_KEY is not set");
-	}
-
 	try {
 		// Ensure the ENS name ends with .eth
 		const normalizedEnsName = ensName.endsWith(".eth")
 			? ensName
 			: `${ensName}.eth`;
 
-		// Call NameStone API to set name
-		const response = await fetch(`${NAMESTONE_API_URL_BASE}set-name`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				api_key: NAMESTONE_API_KEY,
-			},
-			body: JSON.stringify({
-				address: walletAddress,
-				domain: "eth", // Using the default .eth domain
-				name: normalizedEnsName.replace(".eth", ""), // Remove .eth since the domain is specified separately
-				text_records: {
-					description: "ENS name created via social-app-alpha",
-				},
-			}),
-		});
+		const nameWithoutDomain = normalizedEnsName.replace(".eth", "");
 
-		if (!response.ok) {
-			const errorData = await response.json();
-			console.error("NameStone API error:", errorData);
-			return false;
-		}
+		// Use NameStone SDK to set name
+		await namestone.setName({
+			address: walletAddress,
+			domain: "eth", // Using the default .eth domain
+			name: nameWithoutDomain, // Remove .eth since the domain is specified separately
+			text_records: {
+				description: "ENS name created via social-app-alpha",
+			},
+		});
 
 		// Update ENS name in the database
 		db.query("UPDATE users SET ens_name = ? WHERE wallet_address = ?").run(
@@ -108,10 +123,6 @@ async function createOrUpdateEnsName(
 
 // Helper function to get ENS name for an address
 async function getEnsName(walletAddress: string): Promise<string | null> {
-	if (!NAMESTONE_API_KEY) {
-		throw new Error("NAMESTONE_API_KEY is not set");
-	}
-
 	try {
 		// First check our database
 		const user = db
@@ -122,18 +133,14 @@ async function getEnsName(walletAddress: string): Promise<string | null> {
 			return user.ens_name;
 		}
 
-		// If not found in database, check NameStone API
-		const response = await fetch(
-			`${NAMESTONE_API_URL_BASE}get-names?address=${walletAddress}&domain=eth&api_key=${NAMESTONE_API_KEY}`,
-		);
+		// If not found in database, check NameStone API using the SDK
+		const namesData = await namestone.getNames({
+			address: walletAddress,
+			domain: "eth",
+		});
 
-		if (!response.ok) {
-			return null;
-		}
-
-		const data = await response.json();
-		if (data?.names?.length > 0) {
-			const ensName = `${data.names[0]}.eth`;
+		if (namesData.length > 0) {
+			const ensName = `${namesData[0].name}.eth`;
 
 			// Update our database with the ENS name
 			db.query("UPDATE users SET ens_name = ? WHERE wallet_address = ?").run(

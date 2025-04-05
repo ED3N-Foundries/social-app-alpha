@@ -9,7 +9,7 @@ import VueRouter from "unplugin-vue-router/vite";
 import { defineConfig } from "vite";
 import { fileURLToPath, URL } from "node:url";
 
-import { CLIENT_DEV_PORT, CLIENT_PREVIEW_PORT } from "../types";
+import { CLIENT_DEV_PORT, CLIENT_PREVIEW_PORT } from "../server/consts";
 
 // https://vitejs.dev/config/
 export default defineConfig({

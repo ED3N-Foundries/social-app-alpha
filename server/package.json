@@ -10,6 +10,8 @@
     "dev": "bun --hot run server.ts"
   },
   "module": "server.ts",
-  "dependencies": {},
+  "dependencies": {
+    "viem": "^2.25.0"
+  },
   "types": "bun-types"
 }

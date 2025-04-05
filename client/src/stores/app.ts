@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { SERVER_HOST_URI, type TokenBalance } from "../../../types";
+import type { TokenBalance } from "../../../server/server";
+import { Routes, SERVER_HOST_URI } from "../../../server/consts";
 
 export const useAppStore = defineStore("app", () => {
 	// App State
@@ -49,7 +50,7 @@ export const useAppStore = defineStore("app", () => {
 	async function fetchUserWallet(userEmail: string) {
 		try {
 			const response = await fetch(
-				`${SERVER_HOST_URI}/metal/user/${encodeURIComponent(userEmail)}`,
+				`${SERVER_HOST_URI}${Routes.metalUser(userEmail)}`,
 			);
 			if (!response.ok) throw new Error("Failed to fetch wallet");
 
@@ -74,7 +75,7 @@ export const useAppStore = defineStore("app", () => {
 			// We're using the backend as a proxy to the Metal API
 			// The server will add the API key and handle the request
 			const response = await fetch(
-				`${SERVER_HOST_URI}/metal/holder/${encodeURIComponent(email.value)}/balance`,
+				`${SERVER_HOST_URI}${Routes.metalHolderBalance(email.value)}`,
 			);
 
 			if (!response.ok) throw new Error("Failed to fetch token balance");
@@ -96,7 +97,7 @@ export const useAppStore = defineStore("app", () => {
 		error.value = "";
 
 		try {
-			const response = await fetch(`${SERVER_HOST_URI}/ens/set-name`, {
+			const response = await fetch(`${SERVER_HOST_URI}${Routes.ensSetName()}`, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
