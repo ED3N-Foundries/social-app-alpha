@@ -19,6 +19,13 @@ ED3N is a decentralized, open-source platform to create, host, and manage events
 - **Storage**: IPFS (via NFT.Storage or Pinata)
 - **Wallet Support**: MetaMask, WalletConnect (via RainbowKit)
 
+## 👥 Team Social Handles
+
+Team Ed3n https://x.com/ED3N_Foundries
+- Michael Seebarn: https://github.com/digisomni
+- Robin Fischer:  https://x.com/robin_fischer7
+- Paddy Jow: https://x.com/bricshq
+
 ## 🚀 Getting Started
 
 ```bash
